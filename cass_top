@@ -5,26 +5,48 @@
 # Date: 2014 09 16
 # Env: Linux bash
 # License: Apache 2
-# Version: 0.2
 # Usage: cass_top [host] [keyspace]
+
+version="0.3"
 
 # $1 = host     (default: localhost)
 # $2 = keyspace (default: none)
 
 # bash read timeout feature
-TMOUT=5
+timeout=1
 
-# where to find the nodetool command
+# where to find commands
 nodetool_cmd="nodetool"
+grep_cmd="grep"
+
+clear_stdin() {
+   read -t 1 -n 10000 discard
+}
+
+press_any_key() {
+      clear_stdin
+      read -s -n 1 -p "Press any key to continue ... " anykey
+      echo
+}
+
+prepend_auth() {
+   cmd=$1
+   # prepend authentication credentials if set in cassandra-env.sh
+   [ -z "$JMX_USERNAME" ] || cmd="$cmd -u $JMX_USERNAME -pw $JMX_PASSWORD"
+
+   echo -n "$cmd"
+}
 
 if [ -z "$1" ]; then
-  c_host="localhost"
+   c_host="localhost"
 else
-  c_host=$1
+   c_host=$1
 fi
 
-# prepend authentication credentials if set in cassandra-env.sh
-[ -z "$JMX_USERNAME" ] || nodetool_cmd="$nodetool_cmd -u $JMX_USERNAME -pw $JMX_PASSWORD"
+# prepend connection host
+nodetool_full="$nodetool_cmd -h $c_host"
+
+nodetool_full=$(prepend_auth "$nodetool_full")
 
 n_green='01;32'
 n_red='01;31'
@@ -33,12 +55,12 @@ n_blue='01;34'
 # use string functions to extract basename from the filename ($0)
 program=${0##*/}
 
-# use string functions to extract version number
-str=`$nodetool_cmd -h $c_host version`
-c_version=${str##* };
+# use string functions to extract Cassandra version number
+str=`$nodetool_full version`
+c_version=${str##* }
 
 # use string functions to extract cluster name, snitch and partitioner
-str=`$nodetool_cmd -h $c_host describecluster`
+str=`$nodetool_full describecluster`
 
 regex="Name: (.*)
 \s+Snitch: (.*Snitch)
@@ -48,26 +70,94 @@ regex="Name: (.*)
 if [[ $str =~ $regex ]]; then
    c_name=${BASH_REMATCH[1]}
    c_snitch=${BASH_REMATCH[2]}
-   c_snitch=${c_snitch##*.};
+   c_snitch=${c_snitch##*.}
    c_partitioner=${BASH_REMATCH[3]}
-   c_partitioner=${c_partitioner##*.};
+   c_partitioner=${c_partitioner##*.}
    c_info="Cluster: $c_name v$c_version using $c_snitch/$c_partitioner"
 else
    c_info="No cluster name found."
 fi
 
+TMOUT=$timeout
+
+# animation to show screen is fresh
+cursor="_"
+progress=$cursor
+
+# clear screen buffer
 clear
 
 while true; do
-   echo "$program (c) James Briggs Date: $(date), Connecting to $c_host $2 ..."
-   echo $c_info
-   $nodetool_cmd -h $c_host status $2 |
-      GREP_COLOR=$n_green grep --color=always '^UN .*\|$' |
-      GREP_COLOR=$n_red   grep --color=always 'DN .*\|$' |
-      GREP_COLOR=$n_blue  grep --color=always '[UD][LJM] .*\|$'
-   echo "Press Ctrl+C to quit"
-   read in # works on recent bash versions bash. otherwise, just sleep
+   # draw screen into an off-screen buffer to avoid apparent slow screen update lag
+   out=`$nodetool_full status $2 |
+      GREP_COLOR=$n_green $grep_cmd --color=always '^UN .*\|$' |
+      GREP_COLOR=$n_red   $grep_cmd --color=always 'DN .*\|$' |
+      GREP_COLOR=$n_blue  $grep_cmd --color=always '[UD][LJM] .*\|$'`
+
+   if [ "$progress" = "$cursor" ]; then
+      progress=" "
+   else
+      progress="$cursor"
+   fi
+
+   # ready to update screen now
    clear
+
+   echo -n "$program $version (c) James Briggs $(date), connecting to $c_host $2 ...
+$c_info
+$out
+Press h for help, q to quit:$progress"
+
+   in=""
+   TMOUT=$timeout
+   read -s -n 1 in # works on recent bash versions bash. otherwise, just sleep
+   TMOUT=0
+
+   if [ "$in" = "f" ]; then
+      echo
+      clear_stdin
+      read -e -p "which host do you want to flush? [none]: " in
+      [ -z "$in" ] && continue
+      nodetool_temp="$nodetool_cmd -h $in"
+      echo "Running $nodetool_temp flush ..."
+      nodetool_temp=$(prepend_auth "$nodetool_temp")
+      $nodetool_temp flush
+      press_any_key
+      continue
+   elif [ "$in" = "g" ]; then
+      echo -e "\nRunning $nodetool_full gossipinfo ..."
+      $nodetool_full gossipinfo
+      press_any_key
+      continue
+   elif [ "$in" = "h" ]; then
+      echo -e "\nusage: $program [host] [keyspace] (Interactive options: fghnqr)"
+      press_any_key
+   elif [ "$in" = "n" ]; then
+      echo
+      clear_stdin
+      read -e -p "which host do you want to display netstats? [none]: " in
+      [ -z "$in" ] && continue
+      nodetool_temp="$nodetool_cmd -h $in"
+      echo "Running $nodetool_temp netstats ..."
+      nodetool_temp=$(prepend_auth "$nodetool_temp")
+      $nodetool_temp netstats
+      press_any_key
+      continue
+   elif [ "$in" = "r" ]; then
+      echo -e "\nRunning $nodetool_full ring ..."
+      $nodetool_full ring
+      press_any_key
+      continue
+   elif [ "$in" = "q" ]; then
+      echo
+      exit
+   else
+      continue
+   fi
+
+   sleep $timeout
+   clear_stdin
 done
 
 exit
+
