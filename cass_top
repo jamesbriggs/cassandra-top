@@ -5,18 +5,17 @@
 # Date: 2014 09 16
 # Env: Linux bash
 # License: Apache 2
-# Version: 0.1
+# Version: 0.2
 # Usage: cass_top [host] [keyspace]
 
 # $1 = host     (default: localhost)
 # $2 = keyspace (default: none)
 
-n_green='01;32'
-n_red='01;31'
-n_blue='01;34'
-
-# read timeout feature
+# bash read timeout feature
 TMOUT=5
+
+# where to find the nodetool command
+nodetool_cmd="nodetool"
 
 if [ -z "$1" ]; then
   c_host="localhost"
@@ -24,10 +23,22 @@ else
   c_host=$1
 fi
 
-# use string functions to get basename from the filename ($0)
+# prepend authentication credentials if set in cassandra-env.sh
+[ -z "$JMX_USERNAME" ] || nodetool_cmd="$nodetool_cmd -u $JMX_USERNAME -pw $JMX_PASSWORD"
+
+n_green='01;32'
+n_red='01;31'
+n_blue='01;34'
+
+# use string functions to extract basename from the filename ($0)
 program=${0##*/}
 
-str=`nodetool -h $c_host describecluster`
+# use string functions to extract version number
+str=`$nodetool_cmd -h $c_host version`
+c_version=${str##* };
+
+# use string functions to extract cluster name, snitch and partitioner
+str=`$nodetool_cmd -h $c_host describecluster`
 
 regex="Name: (.*)
 \s+Snitch: (.*Snitch)
@@ -40,7 +51,7 @@ if [[ $str =~ $regex ]]; then
    c_snitch=${c_snitch##*.};
    c_partitioner=${BASH_REMATCH[3]}
    c_partitioner=${c_partitioner##*.};
-   c_info="Cluster: $c_name, Snitch: $c_snitch, Partitioner: $c_partitioner"
+   c_info="Cluster: $c_name v$c_version using $c_snitch/$c_partitioner"
 else
    c_info="No cluster name found."
 fi
@@ -50,7 +61,7 @@ clear
 while true; do
    echo "$program (c) James Briggs Date: $(date), Connecting to $c_host $2 ..."
    echo $c_info
-   nodetool -h $c_host status $2 |
+   $nodetool_cmd -h $c_host status $2 |
       GREP_COLOR=$n_green grep --color=always '^UN .*\|$' |
       GREP_COLOR=$n_red   grep --color=always 'DN .*\|$' |
       GREP_COLOR=$n_blue  grep --color=always '[UD][LJM] .*\|$'
