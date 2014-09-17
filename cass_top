@@ -1,0 +1,62 @@
+#!/bin/bash
+
+# Program: cass_top
+# Author: James Briggs
+# Date: 2014 09 16
+# Env: Linux bash
+# License: Apache 2
+# Version: 0.1
+# Usage: cass_top [host] [keyspace]
+
+# $1 = host     (default: localhost)
+# $2 = keyspace (default: none)
+
+n_green='01;32'
+n_red='01;31'
+n_blue='01;34'
+
+# read timeout feature
+TMOUT=5
+
+if [ -z "$1" ]; then
+  c_host="localhost"
+else
+  c_host=$1
+fi
+
+# use string functions to get basename from the filename ($0)
+program=${0##*/}
+
+str=`nodetool -h $c_host describecluster`
+
+regex="Name: (.*)
+\s+Snitch: (.*Snitch)
+\s+Partitioner: (.*)
+\s+Schema versions:"
+
+if [[ $str =~ $regex ]]; then
+   c_name=${BASH_REMATCH[1]}
+   c_snitch=${BASH_REMATCH[2]}
+   c_snitch=${c_snitch##*.};
+   c_partitioner=${BASH_REMATCH[3]}
+   c_partitioner=${c_partitioner##*.};
+   c_info="Cluster: $c_name, Snitch: $c_snitch, Partitioner: $c_partitioner"
+else
+   c_info="No cluster name found."
+fi
+
+clear
+
+while true; do
+   echo "$program (c) James Briggs Date: $(date), Connecting to $c_host $2 ..."
+   echo $c_info
+   nodetool -h $c_host status $2 |
+      GREP_COLOR=$n_green grep --color=always '^UN .*\|$' |
+      GREP_COLOR=$n_red   grep --color=always 'DN .*\|$' |
+      GREP_COLOR=$n_blue  grep --color=always '[UD][LJM] .*\|$'
+   echo "Press Ctrl+C to quit"
+   read in # works on recent bash versions bash. otherwise, just sleep
+   clear
+done
+
+exit
