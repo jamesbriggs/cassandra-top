@@ -11,5 +11,5 @@ cass_top is a wrapper around the Cassandra nodetool command that colorizes the n
 
 Usage: cass_top [host] [keyspace]
 
-![cass_top screenshot](/cassandra-top/cass_top.png?raw=true "cass_top screenshot")
+![cass_top screenshot](cass_top.png?raw=true "cass_top screenshot")
 
