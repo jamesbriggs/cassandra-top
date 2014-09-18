@@ -5,11 +5,16 @@
 # Date: 2014 09 16
 # Env: Linux bash
 # License: Apache 2
-# Usage: cass_top [host] [keyspace]
+# Usage: cass_top [connection_host] [keyspace]
+# Programming Notes:
+# - the bash "continue" statement is used to jump back to the "while true" read loop throughout this program, even from nested subroutine calls
+# - the error message "nodetool: line 61: [: XXX unary operator expected" means multiple nodetool args were double-quoted together, confusing nodetool
 
-version="0.5"
+shopt -s nocasematch # case-insensitive regex matches
 
-# $1 = host     (default: localhost)
+version="0.6"
+
+# $1 = node host     (default: localhost)
 # $2 = keyspace (default: none)
 
 # bash read timeout feature
@@ -19,6 +24,10 @@ timeout=1
 nodetool_cmd="nodetool"
 grep_cmd="grep"
 
+hex="0-9a-f"
+ALL=1
+CANCEL=0
+
 # use string functions to extract basename from the filename ($0)
 program=${0##*/}
 
@@ -26,17 +35,84 @@ do_usage() {
    echo "usage: $program [connection_host] [keyspace]"
 }
 
-if [ -z "$1" ]; then
+clear_stdin() {
+   read -t 1 -n 10000 discard_me # this is a bashism to clear stdin before asking for the real user input. Though adding a 1 second pause is not desirable.
+}
+
+c_debug() {
+   s=$1
+
+   echo "debug: $s"
+   press_any_key
+}
+
+press_any_key() {
+   clear_stdin
+   echo
+   read -s -n 1 -p "Press any key to continue, Ctrl+C to quit... " anykey
+   echo # acknowledge input to user
+}
+
+validate_base() {
+   err_msg=$1
+   re=$2
+   s=$3
+   allow_empty=$4
+   on_error_exit=$5
+
+   if [ -z "$s" ]; then
+      [ "$allow_empty" -ne 1 ] && continue
+   else
+      if ! [[ $s =~ $re ]] ; then
+         echo "error: $err_msg"
+         if [ "$on_error_exit" -eq 1 ]; then
+            exit 1
+         else
+            press_any_key
+            continue
+         fi
+      fi
+   fi
+}
+
+validate() {
+   type=$1
+   s=$2
+   allow_empty=$3
+   on_error_exit=$4
+
+   if [ "$type" = "host" ]; then
+      validate_base "not a valid hostname, domainname or IP address" "^[a-z0-9_.:-]+$" "$s" "$allow_empty" "$on_error_exit"
+   elif [ "$type" = "keyspace" ]; then
+      validate_base "not a valid keyspace name" "^[a-z][a-z0-9_]{0,31}$" "$s" "$allow_empty" "$on_error_exit"
+   elif [ "$type" = "cf" ]; then
+      validate_base "not a valid column family name" "^[a-z][a-z0-9_]{0,31}$" "$s" "$allow_empty" "$on_error_exit"
+   elif [ "$type" = "number" ]; then
+      validate_base "not a valid number" "^[0-9]{1,20}$" "$s" "$allow_empty" "$on_error_exit"
+   elif [ "$type" = "integer" ]; then
+      validate_base "not a valid integer" "^-?[0-9]{1,20}$" "$s" "$allow_empty" "$on_error_exit"
+   elif [ "$type" = "uuid" ]; then
+      validate_base "not a valid uuid" "^[$hex]{8}-[$hex]{4}-[$hex]{4}-[$hex]{4}-[$hex]{12}$" "$s" "$allow_empty" "$on_error_exit"
+   else
+       echo "error: invalid validation type '$type'"
+       exit 1
+   fi
+}
+
+c_host=$1
+c_keyspace=$2
+
+if [ -z "$c_host" ]; then
    c_host="localhost"
 else
-   if [ "$1" = "-h" ]; then
+   if [ "$c_host" = "-h" ]; then
       do_usage
       exit
    fi
-   c_host=$1
+   validate "host" "$c_host" 0 1
 fi
 
-c_keyspace=$2
+validate "keyspace" "$c_keyspace" 1 1
 
 append_auth() {
    cmd=$1
@@ -50,17 +126,6 @@ append_auth() {
 nodetool_full="$nodetool_cmd -h $c_host"
 
 nodetool_full=$(append_auth "$nodetool_full")
-
-clear_stdin() {
-   read -t 1 -n 10000 discard_me # this is a bashism to clear stdin before asking for the real user input. Though adding a 1 second pause is not desirable.
-}
-
-press_any_key() {
-   clear_stdin
-   echo
-   read -s -n 1 -p "Press any key to continue, Ctrl+C to quit... " anykey
-   echo # acknowledge input to user
-}
 
 do_status() {
    s=$1
@@ -92,9 +157,8 @@ $usage
 Help for Interactive Commands
 
    Cluster-wide Commands
-
-      c   nodetool cfstats [keyspace].[column family]
-      C   nodetool cfhistograms keyspace column family
+      C   nodetool cfhistograms keyspace column family |
+                   cfstats [keyspace].[column family]
       f   nodetool flush [keyspace] [column family ...]
       r   nodetool ring [keyspace]
       G   nodetool getstreamthroughput |
@@ -103,18 +167,22 @@ Help for Interactive Commands
       t   nodetool tpstats
 
    Node-specific Commands (target_host is a specific Cassandra node)
-
       d   nodetool -h target_host drain
-      H   nodetool -h target_host compactionhistory
-      i   nodetool -h target_host info
       j   nodetool -h target_host join
-      K   nodetool -h target_host compact [keyspace] [column family ... ]
-      l   nodetool -h target_host getLoggingLevels
-      n   nodetool -h target_host netstats
-      p   nodetool -h target_host proxyhistograms
-      s   nodetool -h target_host compactionstats
-      S   nodetool -h target_host statusbinary |
+      c   nodetool -h target_host compact [keyspace] [column family ... ]
+      k   nodetool -h target_host cleanup [keyspace] [column family ... ]
+      I   nodetool -h target_host invalidatekeycache |
+                                  invalidaterowcache
+      S   nodetool -h target_host compactionhistory |
+                                  compactionstats |
+                                  info |
+                                  getLoggingLevels |
+                                  netstats |
+                                  proxyhistograms |
+                                  statusbinary |
                                   statusthrift
+      U   nodetool -h target_host setcompactionthroughput |
+                                  setstreamthroughput
       Z   nodetool -h target_host enableautocompaction |
                                   enablebackup |
                                   enablebinary |
@@ -131,7 +199,6 @@ Help for Interactive Commands
                                   resumehandoff
 
    Miscellaneous Commands
-
       h   help
       q   quit"
 
@@ -141,6 +208,8 @@ Help for Interactive Commands
 
 do_exec() {
    option=$1
+
+   [ -z "$option" ] && continue
 
    echo
    echo "Running $nodetool_full $option..."
@@ -154,12 +223,22 @@ do_flush_exec() {
    keyspace=""
    cf=""
 
-   clear_stdin
-   read -e -p "Which keyspace do you want to flush? [ALL]: " keyspace
+   echo "Which keyspace do you want to flush?"
+   keyspace=$(select_keyspace $ALL)
+   if [ "$keyspace" = "ALL" ]; then
+      keyspace=""
+   else
+      validate "keyspace" "$keyspace" 1
+   fi
 
    if [ -n "$keyspace" ]; then
-      clear_stdin
-      read -e -p "Which column families do you want to flush? [ALL]: " cf
+      echo "Which column families do you want to flush?"
+      cf=$(select_cf $keyspace $ALL)
+      if [ "$cf" = "ALL" ]; then
+         cf=""
+      else
+         validate "cf" "$cf" 1
+      fi
    fi
 
    echo
@@ -170,47 +249,82 @@ do_flush_exec() {
    continue
 }
 
-do_cfstats_exec() {
+do_misc_C() {
+   echo "Choose a column family reporting operation: "
+   op=$(c_select "cfhistograms cfstats")
+
    keyspace=""
    cf=""
 
-   clear_stdin
-   read -e -p "Which keyspace do you want cfstats? [ALL]: " keyspace
+   if [ "$op" = "cfstats" ]; then
+      echo "Which keyspace do you want cfstats?"
+      keyspace=$(select_keyspace $ALL)
+      if [ "$keyspace" = "ALL" ]; then
+         keyspace=""
+       else
+         validate "keyspace" "$keyspace" 1
+       fi
 
-   if [ -n "$keyspace" ]; then
-      clear_stdin
-      read -e -p "Which column families do you want cfstats? [ALL]: " cf
-      if [ -n "$cf" ]; then
-         cf=".$cf"
+      if [ -n "$keyspace" ]; then
+         echo "Which column families do you want cfstats?"
+         cf=$(select_cf $keyspace $ALL)
+         if [ "$cf" = "ALL" ]; then
+            cf=""
+         else
+            validate "cf" "$cf" 1
+          fi
+
+         if [ -n "$cf" ]; then
+            cf=".$cf"
+         fi
       fi
+
+      echo
+      echo "Running $nodetool_full cfstats $keyspace$cf..."
+      $nodetool_full cfstats "$keyspace$cf"
+   elif [ "$op" = "cfhistograms" ]; then
+      echo "Which keyspace do you want cfhistograms?"
+      keyspace=$(select_keyspace $CANCEL)
+      validate "keyspace" "$keyspace" 0
+
+      echo "Which column family do you want cfhistograms?"
+      cf=$(select_cf $keyspace $CANCEL)
+      validate "cf" "$cf" 0
+
+      echo
+      echo "Running $nodetool_full cfhistograms $keyspace $cf..."
+      $nodetool_full cfhistograms $keyspace $cf
+   else
+      continue
    fi
 
-   echo
-   echo "Running $nodetool_full cfstats $keyspace$cf..."
-   $nodetool_full cfstats "$keyspace$cf"
    do_status $?
    press_any_key
    continue
 }
 
-do_cfhistograms_exec() {
-   keyspace=""
-   cf=""
+select_node() {
+   n=$(c_select "$hosts")
+   echo $n
+}
 
-   clear_stdin
-   read -e -p "Which keyspace do you want cfhistograms? [NONE]: " keyspace
-   [ -z "$keyspace" ] && continue
+select_keyspace() {
+   all=$1
 
-   clear_stdin
-   read -e -p "Which column family do you want cfhistograms? [NONE]: " cf
-   [ -z "$cf" ] && continue
+   keyspaces=$(get_keyspaces)
 
-   echo
-   echo "Running $nodetool_full cfhistograms $keyspace $cf..."
-   $nodetool_full cfhistograms "$keyspace $cf"
-   do_status $?
-   press_any_key
-   continue
+   n=$(c_select "$keyspaces" $all)
+   echo $n
+}
+
+select_cf() {
+   keyspace=$1
+   all=$2
+
+   cfs=$(get_cfs "$keyspace")
+
+   n=$(c_select "$cfs" $all)
+   echo $n
 }
 
 do_compact_exec() {
@@ -218,15 +332,23 @@ do_compact_exec() {
    keyspace=""
    cf=""
 
-   clear_stdin
-   read -e -p "Which host do you want to compact? [NONE]: " nodeid
-   [ -z "$nodeid" ] && continue
-   clear_stdin
-   read -e -p "Which keyspace do you want to compact? [ALL]: " keyspace
+   echo "Choose a host node to compact: "
+   nodeid=$(select_node)
+   validate "host" "$nodeid" 0
+   keyspace=$(select_keyspace $ALL)
+   if [ "$keyspace" = "ALL" ]; then
+      keyspace=""
+   else
+      validate "keyspace" "$keyspace" 1
+   fi
 
    if [ -n "$keyspace" ]; then
-      clear_stdin
-      read -e -p "Which column families do you want to compact? [ALL]: " cf
+      cf=$(select_cf $keyspace $ALL)
+      if [ "$cf" = "ALL" ]; then
+         cf=""
+      else
+         validate "cf" "$cf" 1
+      fi
    fi
 
    nodetool_temp="$nodetool_cmd -h $nodeid"
@@ -240,11 +362,50 @@ do_compact_exec() {
    continue
 }
 
+do_cleanup_exec() {
+   nodeid=""
+   keyspace=""
+   cf=""
+
+   echo "Choose a host node to cleanup: "
+   nodeid=$(select_node)
+   validate "host" "$nodeid" 0
+   keyspace=$(select_keyspace $ALL)
+   if [ "$keyspace" = "ALL" ]; then
+      keyspace=""
+   else
+      validate "keyspace" "$keyspace" 1
+   fi
+
+   if [ -n "$keyspace" ]; then
+      cf=$(select_cf $keyspace $ALL)
+      if [ "$cf" = "ALL" ]; then
+         cf=""
+      else
+         validate "cf" "$cf" 1
+      fi
+   fi
+
+   nodetool_temp="$nodetool_cmd -h $nodeid"
+   echo
+   echo "Running $nodetool_temp cleanup $keyspace $cf..."
+   echo
+   nodetool_temp=$(append_auth "$nodetool_temp")
+   $nodetool_temp cleanup $keyspace $cf
+   do_status $?
+   press_any_key
+   continue
+}
+
 do_ring_exec() {
    keyspace=""
 
-   clear_stdin
-   read -e -p "Which keyspace do you want ring info? [ALL]: " keyspace
+   keyspace=$(select_keyspace $ALL)
+   if [ "$keyspace" = "ALL" ]; then
+      keyspace=""
+   else
+      validate "keyspace" "$keyspace" 1
+   fi
 
    echo
    echo "Running $nodetool_full ring $keyspace..."
@@ -262,9 +423,10 @@ read_host_and_exec() {
    [ -z "$option" ] && continue
 
    nodeid=""
-   clear_stdin
-   read -e -p "Which host do you want to $option? [NONE]: " nodeid
-   [ -z "$nodeid" ] && continue
+   echo "Choose a host node to $option: "
+   nodeid=$(select_node)
+   validate "host" "$nodeid" 0
+
    nodetool_temp="$nodetool_cmd -h $nodeid"
    echo
    echo "Running $nodetool_temp $option..."
@@ -276,49 +438,122 @@ read_host_and_exec() {
    continue
 }
 
-do_misc_G() {
+read_and_set_number_exec() {
+   option=$1
+
+   [ -z "$option" ] && continue
+
+   mb=""
+   clear_stdin
+   read -e -p "What is setting in MB for $option (0 is unlimited)? [CANCEL]: " mb
+   validate "number" "$mb" 0
+   echo
+   echo "Running $nodetool_full $option $mb..."
+   echo
+   $nodetool_full $option $mb
+   do_status $?
+   press_any_key
+   continue
+}
+
+c_select() {
+   c=$1
+   all=$2
+
+   if [ -n "$all" ] && [ "$all" -eq 1 ]; then
+      meta="ALL"
+   else
+      meta="CANCEL"
+   fi
+   
    op=""
    PS3="Pick a number: "
 
-   echo "Choose a cluster-wide reporting operation: "
-
-   select op in getstreamthroughput getcompactionthroughput gossipinfo QUIT; do
-      break
+   select op in $c $meta; do
+      [ -n "$op" ] && break
    done
 
-   [ "$op" = "QUIT" ] && continue
+#   if [ "$op" = "$meta" ] && [ -n "$all" ] && [ "$all" -ne 1 ]; then
+   if [ "$op" = "CANCEL" ]; then
+      continue
+   fi
 
+   echo $op # return the choice for capture by caller
+}
+
+do_misc_G() {
+   echo "Choose a cluster-wide reporting operation: "
+   op=$(c_select "getstreamthroughput getcompactionthroughput gossipinfo")
    do_exec $op
+}
+
+do_misc_I() {
+   echo "Choose a node invalidate cache operation: "
+   op=$(c_select "invalidatekeycache invalidaterowcache")
+   read_host_and_exec $op
 }
 
 do_misc_S() {
-   op=""
-   PS3="Pick a number: "
+   echo "Choose a node status operation: "
+   op=$(c_select "compactionhistory compactionstats info getLoggingLevels netstats proxyhistograms statusbinary statusthrift")
+   read_host_and_exec $op
+}
 
-   echo "Choose a cluster-wide status operation: "
-
-   select op in statusbinary statusthrift QUIT; do
-      break
-   done
-
-   [ "$op" = "QUIT" ] && continue
-
-   do_exec $op
+do_misc_U() {
+   echo "Choose a node setting operation: "
+   op=$(c_select "setcompactionthroughput setstreamthroughput")
+   read_and_set_number_exec $op
 }
 
 do_misc_Z() {
-   op=""
-   PS3="Pick a number: "
-
-   echo "Choose a node operation: "
-
-   select op in enableautocompaction enablebackup enablebinary enablegossip enablehandoff enablethrift disableautocompaction disablebackup disablebinary disablegossip disablehandoff disablethrift pausehandoff resumehandoff QUIT; do
-      break
-   done
-
-   [ "$op" = "QUIT" ] && continue
-
+   echo "Choose a node setting operation: "
+   op=$(c_select "enableautocompaction enablebackup enablebinary enablegossip enablehandoff enablethrift disableautocompaction disablebackup disablebinary disablegossip disablehandoff disablethrift pausehandoff resumehandoff")
    read_host_and_exec $op
+}
+
+get_hosts() {
+   in=$1
+   hosts=""
+
+   re='[DU][NLJM]  ([^ ]+) '
+
+   printf %s "$in\n" | while IFS= read -r line || [ -n "$line" ]
+   do
+      if [[ $line =~ $re ]] ; then
+         echo -n "${BASH_REMATCH[1]} "
+      fi
+   done
+}
+
+get_keyspaces() {
+   keyspaces=""
+
+   in=`$nodetool_full cfstats $keyspace`
+
+   re='Keyspace: (.*)'
+
+   printf %s "$in" | while IFS= read -r line || [ -n "$line" ]
+   do
+      if [[ $line =~ $re ]] ; then
+         echo -n "${BASH_REMATCH[1]} "
+      fi
+   done
+}
+
+get_cfs() {
+   keyspace=$1
+   cfs=""
+
+   in=`$nodetool_full cfstats $keyspace`
+
+   re='Table: (.*)'
+
+   printf %s "$in" | while IFS= read -r line || [ -n "$line" ]
+   do
+      if [[ $line =~ $re ]] ; then
+         echo -n "${BASH_REMATCH[1]} "
+      fi
+   done
 }
 
 n_green='01;32'
@@ -326,7 +561,13 @@ n_red='01;31'
 n_blue='01;34'
 
 # use string functions to extract Cassandra version number
-str=`$nodetool_full version`
+str=`$nodetool_full version 2>&1`
+str2=${str:0:6}
+if [ "$str2" = "Failed" ] || [ "$str2" = "Cannot" ]; then
+   echo "error: cannot connect to '$c_host'"
+   exit 1
+fi
+
 c_version=${str##* }
 
 # use string functions to extract cluster name, snitch and partitioner
@@ -348,11 +589,12 @@ else
    c_info="No cluster name found."
 fi
 
-TMOUT=$timeout
-
 # animation to show screen is fresh
 cursor="_"
 progress=$cursor
+
+first_run=1
+views=0
 
 while true; do
    # draw screen into an off-screen buffer to avoid apparent slow screen update lag
@@ -363,6 +605,12 @@ while true; do
 
    out=${out/Note: Ownership information*specify a keyspace/} # remove informational message if user doesn't append a keyspace name
 
+   if [ "$first_run" -eq 1 ] || [ $(( $views % 100 )) -eq 0 ]; then
+      hosts=$(get_hosts "$out")
+      k=`nodetool -h $c_host cfstats`
+      first_run=0
+   fi
+   
    if [ "$progress" = "$cursor" ]; then
       progress=" "
    else
@@ -374,20 +622,22 @@ while true; do
 
    banner=$(do_banner)
 
-   echo -e "$banner
+   echo -n "$banner
 $out
-Press 'h' for help, 'q' to quit:$progress"
+"
 
    TMOUT=$timeout # use the TMOUT envariable since read -t $timeout seems flaky
    in=""
-   read -n 1 -s in
+   read -s -n 1 -p "Press 'h' for help, 'q' to quit:$progress" in
    TMOUT=0
 
+   let views++
+
    # Big Switch
-   if [ "$in" = "c" ]; then # nodetool cfstats [keyspace].[column family]
-      do_cfstats_exec 
-   elif [ "$in" = "C" ]; then # nodetool cfhistograms keyspace column family
-      do_cfhistograms_exec 
+   if [ "$in" = "c" ]; then # nodetool -h target_node compact [keyspace] [column family ...]
+      do_compact_exec
+   elif [ "$in" = "C" ]; then # misc cf nodetool reports
+      do_misc_C
    elif [ "$in" = "d" ]; then # nodetool -h target_node drain
       read_host_and_exec drain
    elif [ "$in" = "f" ]; then # nodetool -h target_node flush [keyspace] [column families ...]
@@ -396,35 +646,25 @@ Press 'h' for help, 'q' to quit:$progress"
       do_misc_G
    elif [ "$in" = "h" ]; then # help
       do_help
-   elif [ "$in" = "H" ]; then # nodetool -h target_node compactionhistory
-      read_host_and_exec compactionhistory
-   elif [ "$in" = "i" ]; then # nodetool -h target_node info
-      read_host_and_exec info
-   elif [ "$in" = "j" ]; then # nodetool -h target_node netstats
+   elif [ "$in" = "I" ]; then # misc invalidate nodetool commands
+      do_misc_I
+   elif [ "$in" = "j" ]; then # nodetool -h target_node join
       read_host_and_exec join
-   elif [ "$in" = "k" ]; then # nodetool -h target_node compact [keyspace] [column family ...]
-      do_compact_exec
-   elif [ "$in" = "K" ]; then # nodetool -h target_node getcompactionthroughput
-      do_exec getcompactionthroughput
-   elif [ "$in" = "l" ]; then # nodetool -h target_node getLoggingLevels
-      read_host_and_exec getLoggingLevels
-   elif [ "$in" = "n" ]; then # nodetool -h target_node netstats
-      read_host_and_exec netstats
-   elif [ "$in" = "p" ]; then # nodetool -h target_node proxyhistograms
-      read_host_and_exec proxyhistograms
+   elif [ "$in" = "k" ]; then # nodetool -h target_node cleanup [keyspace] [column family ...]
+      do_cleanup_exec
    elif [ "$in" = "q" ]; then # quit
       exit
    elif [ "$in" = "r" ]; then # nodetool ring [keyspace]
       do_ring_exec
-   elif [ "$in" = "s" ]; then # nodetool -h target_node compactionstats
-      read_host_and_exec compactionstats
    elif [ "$in" = "S" ]; then # misc status nodetool commands
       do_misc_S
    elif [ "$in" = "t" ]; then # nodetool tpstats
       do_exec tpstats
+   elif [ "$in" = "U" ]; then # misc setting nodetool commands
+      do_misc_U
    elif [ "$in" = "Z" ]; then # misc enable and disable nodetool commands
       do_misc_Z
-   else # other characters cause screen to update more quickly by skipping the sleep
+   elif [ -n "$in" ]; then # other characters cause screen to update more quickly by skipping the sleep
       continue
    fi
 
