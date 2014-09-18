@@ -6,7 +6,7 @@ Cassandra top command to monitor cluster named cass_top, similar to the linux to
 cass_top is a wrapper around the Cassandra nodetool command that:
 
 - colorizes the nodes by status
-- has interactive option keys for several nodetool reporting options, documented on the help screen
+- has interactive option keys for many nodetool reporting options, documented on the help screen
 - bash only (no dependencies except nodetool and grep)
 - no additional firewall holes needed
 - minimal output to show multiple Cassandra rings on the same monitor.
