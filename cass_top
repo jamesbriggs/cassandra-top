@@ -7,7 +7,7 @@
 # License: Apache 2
 # Usage: cass_top [host] [keyspace]
 
-version="0.3"
+version="0.4"
 
 # $1 = host     (default: localhost)
 # $2 = keyspace (default: none)
@@ -19,34 +19,176 @@ timeout=1
 nodetool_cmd="nodetool"
 grep_cmd="grep"
 
-clear_stdin() {
-   read -t 1 -n 10000 discard
-}
-
-press_any_key() {
-      clear_stdin
-      read -s -n 1 -p "Press any key to continue ... " anykey
-      echo
-}
-
-prepend_auth() {
-   cmd=$1
-   # prepend authentication credentials if set in cassandra-env.sh
-   [ -z "$JMX_USERNAME" ] || cmd="$cmd -u $JMX_USERNAME -pw $JMX_PASSWORD"
-
-   echo -n "$cmd"
-}
-
 if [ -z "$1" ]; then
    c_host="localhost"
 else
    c_host=$1
 fi
 
+c_keyspace=$2
+
+prepend_auth() {
+   cmd=$1
+   # prepend authentication credentials if set in cassandra-env.sh
+   [ -z "$JMX_USERNAME" ] || cmd="$cmd -u $JMX_USERNAME -pw $JMX_PASSWORD"
+
+   echo -n "$cmd" # bash doesn't have a real function return capability, so echo the return value for capture by the caller
+}
+
 # prepend connection host
 nodetool_full="$nodetool_cmd -h $c_host"
 
 nodetool_full=$(prepend_auth "$nodetool_full")
+
+clear_stdin() {
+   read -t 1 -n 10000 discard_me # this is a bashism to clear stdin before asking for the real user input. Though adding a 1 second pause is not desirable.
+}
+
+press_any_key() {
+   clear_stdin
+   echo
+   read -s -n 1 -p "Press any key to continue, Ctrl+C to quit... " anykey
+   echo # acknowledge input to user
+}
+
+do_status() {
+   s=$1
+
+   if [ $s -eq 0 ]; then
+      echo
+      echo "Success!"
+   else
+      echo
+      echo "Error: $program reports that the nodetool exit status was $s"
+   fi
+}
+
+do_banner() {
+   echo "$program $version (c) James Briggs $(date), connecting to $c_host $c_keyspace...
+$c_info"
+}
+
+do_help() {
+   clear
+
+   do_banner
+
+   echo
+   echo "usage: $program [connection_host] [keyspace]
+
+Help for Interactive Commands
+
+   Cluster-wide Commands
+
+      c   nodetool cfstats [keyspace].[column family]
+      f   nodetool flush [keyspace] [column family ...]
+      g   nodetool gossipinfo
+      r   nodetool ring [keyspace]
+
+   Node-specific Commands (target_host is a specific Cassandra node)
+
+      d   nodetool -h target_host drain
+      j   nodetool -h target_host join
+      n   nodetool -h target_host netstats
+
+   Miscellaneous Commands
+
+      h   help
+      q   quit"
+
+   press_any_key
+   continue
+}
+
+do_exec() {
+   option=$1
+
+   echo
+   echo "Running $nodetool_full $option..."
+   echo
+   $nodetool_full $option
+   press_any_key
+   continue
+}
+
+do_flush_exec() {
+   keyspace=""
+   cf=""
+
+   clear_stdin
+   read -e -p "Which keyspace do you want to flush? [ALL]: " keyspace
+
+   if [ ! -z "$keyspace" ]; then
+      clear_stdin
+      read -e -p "Which column families do you want to flush? [ALL]: " cf
+   fi
+
+   echo
+   echo "Running $nodetool_full flush $keyspace $cf..."
+   $nodetool_full flush $keyspace $cf
+   do_status $?
+   press_any_key
+   continue
+}
+
+do_cfstats_exec() {
+   keyspace=""
+   cf=""
+
+   clear_stdin
+   read -e -p "Which keyspace do you want cfstats? [ALL]: " keyspace
+
+   if [ ! -z "$keyspace" ]; then
+      clear_stdin
+      read -e -p "Which column families do you want cfstats? [ALL]: " cf
+      if [ ! -z "$cf" ]; then
+         cf=".$cf"
+      fi
+   fi
+
+   echo
+   echo "Running $nodetool_full cfstats $keyspace$cf..."
+   $nodetool_full flush "$keyspace$cf"
+   do_status $?
+   press_any_key
+   continue
+}
+
+do_ring_exec() {
+   keyspace=""
+
+   clear_stdin
+   read -e -p "Which keyspace do you want ring info? [ALL]: " keyspace
+
+   echo
+   echo "Running $nodetool_full ring $keyspace..."
+   echo
+   $nodetool_full ring $keyspace
+   do_status $?
+   press_any_key
+   continue
+}
+
+# call nodetool -h nodeid option
+read_host_and_exec() {
+   option=$1
+
+   [ -z "$option" ] && continue
+
+   nodeid=""
+   clear_stdin
+   read -e -p "Which host do you want to $option? [none]: " nodeid
+   [ -z "$nodeid" ] && continue
+   nodetool_temp="$nodetool_cmd -h $nodeid"
+   echo
+   echo "Running $nodetool_temp $option..."
+   echo
+   nodetool_temp=$(prepend_auth "$nodetool_temp")
+   $nodetool_temp $option
+   do_status $?
+   press_any_key
+   continue
+}
 
 n_green='01;32'
 n_red='01;31'
@@ -84,15 +226,14 @@ TMOUT=$timeout
 cursor="_"
 progress=$cursor
 
-# clear screen buffer
-clear
-
 while true; do
    # draw screen into an off-screen buffer to avoid apparent slow screen update lag
    out=`$nodetool_full status $2 |
       GREP_COLOR=$n_green $grep_cmd --color=always '^UN .*\|$' |
       GREP_COLOR=$n_red   $grep_cmd --color=always 'DN .*\|$' |
       GREP_COLOR=$n_blue  $grep_cmd --color=always '[UD][LJM] .*\|$'`
+
+   out=${out/Note: Ownership information*specify a keyspace/} # remove informational message if user doesn't append a keyspace name
 
    if [ "$progress" = "$cursor" ]; then
       progress=" "
@@ -103,60 +244,40 @@ while true; do
    # ready to update screen now
    clear
 
-   echo -n "$program $version (c) James Briggs $(date), connecting to $c_host $2 ...
-$c_info
-$out
-Press h for help, q to quit:$progress"
+   do_banner
 
+   echo -e "$out
+Press 'h' for help, 'q' to quit:$progress"
+
+   TMOUT=$timeout # use the TMOUT envariable since read -t $timeout seems flaky
    in=""
-   TMOUT=$timeout
-   read -s -n 1 in # works on recent bash versions bash. otherwise, just sleep
+   # works on recent bash versions bash. otherwise, just sleep
+   read -n 1 -s in
    TMOUT=0
 
-   if [ "$in" = "f" ]; then
-      echo
-      clear_stdin
-      read -e -p "which host do you want to flush? [none]: " in
-      [ -z "$in" ] && continue
-      nodetool_temp="$nodetool_cmd -h $in"
-      echo "Running $nodetool_temp flush ..."
-      nodetool_temp=$(prepend_auth "$nodetool_temp")
-      $nodetool_temp flush
-      press_any_key
-      continue
-   elif [ "$in" = "g" ]; then
-      echo -e "\nRunning $nodetool_full gossipinfo ..."
-      $nodetool_full gossipinfo
-      press_any_key
-      continue
-   elif [ "$in" = "h" ]; then
-      echo -e "\nusage: $program [host] [keyspace] (Interactive options: fghnqr)"
-      press_any_key
-   elif [ "$in" = "n" ]; then
-      echo
-      clear_stdin
-      read -e -p "which host do you want to display netstats? [none]: " in
-      [ -z "$in" ] && continue
-      nodetool_temp="$nodetool_cmd -h $in"
-      echo "Running $nodetool_temp netstats ..."
-      nodetool_temp=$(prepend_auth "$nodetool_temp")
-      $nodetool_temp netstats
-      press_any_key
-      continue
-   elif [ "$in" = "r" ]; then
-      echo -e "\nRunning $nodetool_full ring ..."
-      $nodetool_full ring
-      press_any_key
-      continue
-   elif [ "$in" = "q" ]; then
-      echo
+   if [ "$in" = "c" ]; then # nodetool cfstats [keyspace].[column family]
+      do_cfstats_exec 
+   elif [ "$in" = "d" ]; then # nodetool -h target_node drain
+      read_host_and_exec drain
+   elif [ "$in" = "f" ]; then # nodetool -h target_node flush [keyspace] [column families ...]
+      do_flush_exec
+   elif [ "$in" = "g" ]; then # nodetool gossipinfo
+      do_exec gossipinfo
+   elif [ "$in" = "h" ]; then # help
+      do_help
+   elif [ "$in" = "j" ]; then # nodetool -h target_node netstats
+      read_host_and_exec join
+   elif [ "$in" = "n" ]; then # nodetool -h target_node netstats
+      read_host_and_exec netstats
+   elif [ "$in" = "q" ]; then # quit
       exit
-   else
+   elif [ "$in" = "r" ]; then # nodetool ring [keyspace]
+      do_ring_exec
+   else # other characters cause screen to update more quickly by skipping the sleep
       continue
    fi
 
    sleep $timeout
-   clear_stdin
 done
 
 exit
