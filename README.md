@@ -14,7 +14,7 @@ cass_top is a wrapper around the Cassandra nodetool command that:
 - no additional firewall holes needed
 - minimal output to show multiple Cassandra rings on the same monitor.
 
-Usage: cass_top [host node=localhost] [keyspace=all] [one-character command=none]
+usage: cass_top [connection_host=localhost] [keyspace=all] [one character option=none]
 
 ![cass_top screenshot](cass_top.png?raw=true "cass_top screenshot")
 ![cass_top_help screenshot](cass_top_help.png?raw=true "cass_top_help screenshot")

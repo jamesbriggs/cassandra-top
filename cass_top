@@ -22,6 +22,9 @@ timeout=1
 # where to find commands
 nodetool_cmd="nodetool"
 
+# where to log nodetool commands (to disable logging, use empty string)
+logfile="/tmp/cass_top.log"
+
 flag_confirm_nodetool_operations=1 # 1=confirm before running nodetool commands, 0=do not confirm
 
 MSG_CANCEL="CANCEL"
@@ -63,6 +66,9 @@ ERROR_COLOR=$COLOR_RED_NORMAL
 # select menu meta options
 N_ALL=1
 N_CANCEL=0
+
+LOG_START="S"
+LOG_FINISH="F"
 
 # globally cache nodetool status and cfstats output to improve performance
 hosts_cache=""     # cache hosts output of nodetool status
@@ -454,6 +460,18 @@ msg_running() {
    echo -e "\nReady to run '$msg'"
 }
 
+log_it() {
+   cmd=$1
+   stage=$2
+   status=$3
+
+   [ -z "$status" ] && $status=0
+
+   if [ -n "$logfile" ]; then
+      echo "$(date +"%F %T") $$ $USER $stage $status '$cmd'" >> $logfile
+   fi
+}
+
 run_it() {
    action=$1
    nodeid=$2
@@ -461,18 +479,24 @@ run_it() {
    action=$(tidy_spaces "$action")
 
    if [ -z "$nodeid" ]; then
-      msg_running "$nodetool_full $action"
-      msg_confirm
-      $nodetool_full $action
+      cmd_nopw="$nodetool_cmd -h $c_host $action"
+      cmd="$nodetool_full $action"
    else
-      nodetool_temp="$nodetool_cmd -h $nodeid"
-      msg_running "$nodetool_temp $action"
-      msg_confirm
-      nodetool_temp=$(append_auth "$nodetool_temp")
-      $nodetool_temp $action
+      cmd_nopw="$nodetool_cmd -h $nodeid $action"
+      cmd=$(append_auth "$nodetool_cmd")
+      cmd="$cmd -h $nodeid $action"
    fi
 
-   do_status $?
+   msg_running "$cmd_nopw"
+   msg_confirm
+   log_it "$cmd_nopw" "$LOG_START" "0"
+   if [ -n "$logfile" ]; then
+      tee=" | tee -a ${logfile}.out"
+   fi
+   $cmd
+   status=${PIPESTATUS[0]}
+   do_status $status
+   log_it "$cmd_nopw" "$LOG_FINISH" "$status"
    c_press_any_key
    continue
 }
