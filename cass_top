@@ -357,7 +357,7 @@ validate_cmd_line
 do_status() {
    s=$1
 
-   if [ $s -eq 0 ]; then
+   if [ "$s" -eq 0 ]; then
       echo -e "info: nodetool was successful!"
    else
       c_error "nodetool was not successful, exit status was $s"
@@ -441,7 +441,7 @@ msg_confirm() {
 
    c_yn "Are you sure?"
    if [ "$yn" -eq 1 ]; then
-      echo -e "\nRunning ...\n"
+     echo -n ""
    else
       c_error "You chose to cancel operation."
       continue
@@ -490,14 +490,32 @@ run_it() {
    msg_running "$cmd_nopw"
    msg_confirm
    log_it "$cmd_nopw" "$LOG_START" "0"
-   if [ -n "$logfile" ]; then
-      tee=" | tee -a ${logfile}.out"
+   echo -e "\n$(date +"%F %T") Starting ...\n"
+
+   if [ -z "$logfile" ]; then
+      $cmd
+      status=$?
+   else
+#     If you want nodetool output logged, pick one of the following exec options that works on your bash:
+#
+#     Option 1 (subshell):
+#      ( $cmd ) 2>&1 | tee -a ${logfile}.out
+#      status=${PIPESTATUS[0]}
+
+#     Option 2 (named pipe):
+      $cmd > >(tee -a ${logfile}.out) 2>&1
+      status=${PIPESTATUS[0]}
+
+#     Option 3 (backticks):
+#     out=`$cmd 2>&1`
+#     status=${PIPESTATUS[0]}
+#     echo "$out" >>${logfile}.out
+#     echo "$out"
    fi
-   $cmd
-#   status=${PIPESTATUS[0]}
-   status=$?
+
    do_status $status
    log_it "$cmd_nopw" "$LOG_FINISH" "$status"
+   echo -e "\n$(date +"%F %T") Ending ...\n"
    c_press_any_key
    continue
 }
