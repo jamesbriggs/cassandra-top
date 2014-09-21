@@ -45,6 +45,8 @@ shopt -s nocasematch # case-insensitive regex matches
 RE_HEX="0-9a-f"
 RE_UUID="[$RE_HEX]{8}-[$RE_HEX]{4}-[$RE_HEX]{4}-[$RE_HEX]{4}-[$RE_HEX]{12}"
 
+DT_FMT="%F %T"
+
 # ANSI colors
 COLOR_BLACK_NORMAL="\e[0;30m"
 COLOR_RED_NORMAL="\e[0;31m"
@@ -449,7 +451,7 @@ msg_confirm() {
 }
 
 tidy_spaces() {
-# use bashism to parse string to an array, then squash array to a string single-spaces the elements
+# bashism to trim spaces: parse string to an array, then squash array back to a string to trim and single-space
    ary=($1)
    echo -n "${ary[@]}"
 }
@@ -464,11 +466,14 @@ log_it() {
    cmd=$1
    stage=$2
    status=$3
+   dt=$4
 
-   [ -z "$status" ] && $status=0
+   [ -z "$status" ] && status=0
+   [ -z "$dt" ] && dt="$(date +"$DT_FMT")"
 
    if [ -n "$logfile" ]; then
-      echo "$(date +"%F %T") $$ $USER $stage $status '$cmd'" >> $logfile
+      echo "$dt $$ $USER $stage $status '$cmd'" >> $logfile
+      echo "$dt $$ $USER $stage $status '$cmd'" >> ${logfile}.out
    fi
 }
 
@@ -489,8 +494,9 @@ run_it() {
 
    msg_running "$cmd_nopw"
    msg_confirm
-   log_it "$cmd_nopw" "$LOG_START" "0"
-   echo -e "\n$(date +"%F %T") Starting ...\n"
+   dt="$(date +"$DT_FMT")"
+   log_it "$cmd_nopw" "$LOG_START" "0" "$dt"
+   echo -e "\n$dt Start\n"
 
    if [ -z "$logfile" ]; then
       $cmd
@@ -514,8 +520,9 @@ run_it() {
    fi
 
    do_status $status
-   log_it "$cmd_nopw" "$LOG_FINISH" "$status"
-   echo -e "\n$(date +"%F %T") Ending ...\n"
+   dt="$(date +"$DT_FMT")"
+   log_it "$cmd_nopw" "$LOG_FINISH" "$status" "$dt"
+   echo -e "\n$dt End"
    c_press_any_key
    continue
 }
@@ -572,7 +579,7 @@ get_cf() {
       cfs=$(get_cfs "$keyspace")
    fi
 
-   echo -e "\nWhich column families do you want to $op?"
+   echo -e "\nWhich column family do you want to $op?"
    cf=$(c_select "$cfs" $all $extra)
 
    if [ "$cf" = "$MSG_ALL" ]; then
@@ -708,10 +715,10 @@ do_misc_C() {
 select_node() {
    s=$1
 
-   echo "Choose a host node to $s: "
+   echo -e "\nChoose a host node to $s: "
    
    nodeid=$(c_select "$hosts_cache")
-   [ "$nodeid" = "$MSG_CANCEL" ] && continue # select and continue don't play well together, prolly because select is implemented as a do loop, as is our read loop. it seems to work for now.
+   [ "$nodeid" = "$MSG_CANCEL" ] && continue
 }
 
 do_stop_exec() {
@@ -792,15 +799,14 @@ do_repair_exec() {
    st=""
    et=""
 
-   c_yn "All nodes in the repair DC/DCs must be UP. Are all nodes UP?"
+   select_node "issue repair (this node's DC will be the default local DC for this repair)"
+
+   c_yn "All nodes in the repair DC/DCs must be up. Are all nodes up?"
    if [ "$yn" -ne 1 ]; then
-      c_error "All nodes in the repair DC/DCs must be UP."
+      c_error "All nodes in the repair DC/DCs must be up."
       c_press_any_key
       continue
    fi
-
-   echo
-   select_node "issue repair (this node's DC will be the default local DC for this repair)"
 
    c_yn "Do you want to repair in parallel?"
    [ "$yn" -eq 1 ] && par="-par"
@@ -965,7 +971,7 @@ do_cleanup_exec() {
 do_misc_R() {
    keyspace=""
 
-   echo "Choose a command: "
+   echo -e "\nChoose a command: "
    op=$(c_select "ring describering")
    [ "$op" = "$MSG_CANCEL" ] && continue
 
@@ -1069,37 +1075,37 @@ c_select() {
       [ -n "$zop" ] && break
    done
 
-#   [ "$zop" = "$MSG_CANCEL" ] && continue
+   [ "$zop" = "$MSG_CANCEL" ] && continue
 
    echo -n "$zop"
 }
 
 do_misc_G() {
-   echo "Choose a cluster-wide reporting command: "
+   echo -e "\nChoose a cluster-wide reporting command: "
    op=$(c_select "getstreamthroughput getcompactionthroughput gossipinfo")
    do_exec $op
 }
 
 do_misc_I() {
-   echo "Choose a node invalidate cache command: "
+   echo -e "\nChoose a node invalidate cache command: "
    op=$(c_select "invalidatekeycache invalidaterowcache")
    read_host_and_exec $op
 }
 
 do_misc_S() {
-   echo "Choose a node status command: "
+   echo -e "\nChoose a node status command: "
    op=$(c_select "compactionhistory compactionstats info getLoggingLevels netstats proxyhistograms statusbinary statusthrift version")
    read_host_and_exec $op
 }
 
 do_misc_U() {
-   echo "Choose a cluster-wide setting command: "
+   echo -e "\nChoose a cluster-wide setting command: "
    op=$(c_select "rebuild reloadtriggers setcachecapacity setcachekeystosave setcompactionthroughput setLoggingLevel setstreamthroughput settraceprobability")
    read_and_set_number_exec $op
 }
 
 do_misc_Z() {
-   echo "Choose a node setting command: "
+   echo -e "\nChoose a node setting command: "
    op=$(c_select "decommission enableautocompaction enablebackup enablebinary enablegossip enablehandoff enablethrift disableautocompaction disablebackup disablebinary disablegossip disablehandoff disablethrift pausehandoff resetlocalschema resumehandoff truncatehints")
    read_host_and_exec $op
 }
