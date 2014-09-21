@@ -494,7 +494,8 @@ run_it() {
       tee=" | tee -a ${logfile}.out"
    fi
    $cmd
-   status=${PIPESTATUS[0]}
+#   status=${PIPESTATUS[0]}
+   status=$?
    do_status $status
    log_it "$cmd_nopw" "$LOG_FINISH" "$status"
    c_press_any_key
