@@ -6,9 +6,11 @@
 # Date: 2014 09 16
 # Env: Linux bash, vt100/ANSI terminal types
 # Programming Notes:
-#    - the bash "continue" statement is used to jump back to the "while true" read loop throughout this program, even from nested subroutine calls
-#    - the error message "nodetool: line 61: [: XXX unary operator expected" means multiple nodetool args were double-quoted together, confusing nodetool
+#    - the bash "continue" statement is used to jump back to the "while true" read loop throughout this program, even from nested subroutine calls. it works, except when it doesn't.
+#    - the error message "nodetool: line nnn: [: XXX unary operator expected" means multiple nodetool args were double-quoted together, confusing nodetool
 #    - avoid calling nodetool casually: nodetool status can take seconds.
+#    - it's ugly-looking, but string pasting can be used to one-line read formatting like this: read -e -p $'\n'"What is the DC? "
+#    - bash -x cass_top is surprisingly useful for tracing
 
 version="0.7"
 
@@ -19,7 +21,6 @@ timeout=1
 
 # where to find commands
 nodetool_cmd="nodetool"
-grep_cmd="grep"
 
 flag_confirm_nodetool_operations=1 # 1=confirm before running nodetool commands, 0=do not confirm
 
@@ -35,52 +36,86 @@ sprite_state_off=" "
 
 shopt -s nocasematch # case-insensitive regex matches
 
+# some variables that are globablly used
+
 # some constants
-HEX="0-9a-f"
-UUID="[$HEX]{8}-[$HEX]{4}-[$HEX]{4}-[$HEX]{4}-[$HEX]{12}"
+RE_HEX="0-9a-f"
+RE_UUID="[$RE_HEX]{8}-[$RE_HEX]{4}-[$RE_HEX]{4}-[$RE_HEX]{4}-[$RE_HEX]{12}"
 
 # ANSI colors
-GREP_COLOR_GREEN_NORMAL='0;32'
-GREP_COLOR_RED_NORMAL='0;31'
-GREP_COLOR_BLUE_NORMAL='0;34'
+COLOR_BLACK_NORMAL="\e[0;30m"
+COLOR_RED_NORMAL="\e[0;31m"
+COLOR_GREEN_NORMAL="\e[0;32m"
+COLOR_BLUE_NORMAL="\e[0;34m"
 
-GREP_COLOR_GREEN_BOLD='1;32'
-GREP_COLOR_RED_BOLD='1;31'
-GREP_COLOR_BLUE_BOLD='1;34'
+COLOR_BLACK_BOLD="\e[1;30m"
+COLOR_RED_BOLD="\e[1;31m"
+COLOR_GREEN_BOLD="\e[1;32m"
+COLOR_BLUE_BOLD="\e[1;34m"
 
-set_colors_normal() {
-   GREP_COLOR_GREEN=$GREP_COLOR_GREEN_NORMAL
-   GREP_COLOR_RED=$GREP_COLOR_RED_NORMAL
-   GREP_COLOR_BLUE=$GREP_COLOR_BLUE_NORMAL
-}
+COLOR_RESET="\e[0m"
 
-set_colors_bold() {
-   GREP_COLOR_GREEN=$GREP_COLOR_GREEN_BOLD
-   GREP_COLOR_RED=$GREP_COLOR_RED_BOLD
-   GREP_COLOR_BLUE=$GREP_COLOR_BLUE_BOLD
-}
+HELP_COLOR_SAFE=$COLOR_GREEN_NORMAL
+HELP_COLOR_BOLD=$COLOR_BLACK_BOLD
 
-set_colors_normal
-
-HELP_COLOR_SAFE="\e[0;32m"
-HELP_COLOR_BOLD="\e[1;30m"
-HELP_COLOR_RESET="\e[0m"
+ERROR_COLOR=$COLOR_RED_NORMAL
 
 # select menu meta options
 N_ALL=1
 N_CANCEL=0
 
-# use string functions to extract basename from the filename ($0)
-program=${0##*/}
-
-# some variables that are globablly used
-
+# globally cache nodetool status and cfstats output to improve performance
 hosts_cache=""     # cache hosts output of nodetool status
 keyspaces_cache="" # cache output of nodetool cfstats
 
-do_usage() {
-   echo "$program $version usage: $program [connection_host] [keyspace]"
+# avoid these global variables unless you understand them
+
+cf=""
+in=""
+keyspace=""
+op=""
+yn=""
+c_host=$1
+c_keyspace=$2
+c_option=$3
+first_run=1
+n_views=0
+program=${0##*/} # extract basename from the full pathname ($0)
+
+msg_usage="$program $version usage: $program [connection_host=localhost] [keyspace=all] [one character option=none]"
+
+show_usage() {
+   echo $msg_usage
 }
+
+cleanup() {
+   echo
+   return $?
+}
+
+control_c()
+# run if user hits control-c
+{
+   cleanup
+   return $?
+}
+ 
+# trap keyboard interrupt (control-c)
+# trap control_c SIGINT
+
+select_colors_normal() {
+   DISPLAY_COLOR_GREEN=$COLOR_GREEN_NORMAL
+   DISPLAY_COLOR_RED=$COLOR_RED_NORMAL
+   DISPLAY_COLOR_BLUE=$COLOR_BLUE_NORMAL
+}
+
+select_colors_bold() {
+   DISPLAY_COLOR_GREEN=$COLOR_GREEN_BOLD
+   DISPLAY_COLOR_RED=$COLOR_RED_BOLD
+   DISPLAY_COLOR_BLUE=$COLOR_BLUE_BOLD
+}
+
+select_colors_normal
 
 clear_screen() {
   clear
@@ -88,21 +123,27 @@ clear_screen() {
 }
 
 clear_stdin() {
-   read -t 1 -n 10000 discard_me # this is a bashism to clear stdin before asking for the real user input. Though adding a 1 second pause is not desirable.
+   read -t 1 -n 10000 discard_me # this is a bashism to clear stdin (before asking for the real user input), though adding a 1 second pause
 }
 
 c_debug() {
    s=$1
 
    echo "debug: $s"
-   press_any_key
+   c_press_any_key
 }
 
-press_any_key() {
+c_error() {
+   msg=$1
+
+   echo -e "\n${ERROR_COLOR}error: $msg${COLOR_RESET}"
+}
+
+c_press_any_key() {
    clear_stdin
    echo
    read -s -n 1 -p "Press any key to continue, Ctrl+C to quit... " anykey
-   echo # acknowledge input to user
+   echo # acknowledge that user supplied input
 }
 
 validate_base() {
@@ -116,11 +157,11 @@ validate_base() {
       [ "$allow_empty" -ne 1 ] && continue
    else
       if ! [[ $s =~ $re ]] ; then
-         echo "error: $err_msg"
+         c_error "$err_msg"
          if [ "$on_error_exit" -eq 1 ]; then
             exit 1
          else
-            press_any_key
+            c_press_any_key
             continue
          fi
       fi
@@ -145,7 +186,7 @@ validate() {
    elif [ "$type" = "host" ]; then
       validate_base "not a valid hostname, domainname or IP address" "^[a-z0-9_.:-]+$" "$s" "$allow_empty" "$on_error_exit"
 
-   elif [ "$type" = "cf" ]; then
+   elif [ "$type" = "cf" ] | [ "$type" = "keyspace" ]; then
       validate_base "not a valid column family name" "^[a-z][a-z0-9_]{0,31}$" "$s" "$allow_empty" "$on_error_exit"
 
    elif [ "$type" = "integer" ]; then
@@ -154,11 +195,8 @@ validate() {
    elif [ "$type" = "java_domain" ]; then # eg. org.apache.cassandra.service.StorageProxy
       validate_base "not a valid java domain" "^[a-z0-9.]+$" "$s" "$allow_empty" "$on_error_exit"
 
-   elif [ "$type" = "key" ]; then
-      validate_base "not a valid key name" "^[-a-z0-9]$" "$s" "$allow_empty" "$on_error_exit"
-
-   elif [ "$type" = "keyspace" ]; then
-      validate_base "not a valid keyspace name" "^[a-z][a-z0-9_]{0,31}$" "$s" "$allow_empty" "$on_error_exit"
+   elif [ "$type" = "key" ] || [ "$type" = "token" ]; then
+      validate_base "not a valid token" "^-?$RE_HEX+$" "$s" "$allow_empty" "$on_error_exit"
 
    elif [ "$type" = "loglevel" ]; then
       validate_base "not a valid logging level" "^(TRACE|DEBUG|INFO|WARN|ERROR|FATAL)$" "$s" "$allow_empty" "$on_error_exit"
@@ -170,52 +208,50 @@ validate() {
       validate_base "not a valid probability" "^[01]\.[0-9.]{3}$" "$s" "$allow_empty" "$on_error_exit"
 
    elif [ "$type" = "uuid" ]; then
-      validate_base "not a valid uuid" "$UUID" "$s" "$allow_empty" "$on_error_exit"
+      validate_base "not a valid uuid" "$RE_UUID" "$s" "$allow_empty" "$on_error_exit"
 
    else
        echo "error: invalid validation type '$type'"
-       exit 3
+       exit 4
    fi
 }
 
 append_auth() {
    cmd=$1
+
    # append authentication credentials if set in cassandra-env.sh
    [ -z "$JMX_USERNAME" ] || cmd="$cmd -u $JMX_USERNAME -pw $JMX_PASSWORD"
 
    echo -n "$cmd" # bash doesn't have a real function return capability, so echo the return value for capture by the caller
 }
 
-# validate command line args
+do_colorize() {
+   s=$1
 
-c_host=$1
-c_keyspace=$2
+   re="^([DU][NLJM] +.*)"
 
-if [ -z "$c_host" ]; then
-   c_host="localhost"
-else
-   if [ "$c_host" = "-h" ]; then
-      do_usage
-      exit 1
-   fi
-   validate "host" "$c_host" 0 1
-fi
+   pre=""
+   post=$COLOR_RESET
 
-# when nodetool connects to c_host, it will do the final name resolution and auth validations
+   printf %s "$s" | while IFS= read -r line || [ -n "$line" ]; do
+# we are in a subshell, so variable settings will be forgotten. either use echo or write to a file for persistence
+      if [[ "$line" =~ $re ]]; then
+         match=${BASH_REMATCH[0]}
+         if [ "${match:0:3}" = "UN " ]; then
+            pre=$DISPLAY_COLOR_GREEN
+         elif [ "${match:0:3}" = "DN " ]; then
+            pre=$DISPLAY_COLOR_RED
+         else
+            pre=$DISPLAY_COLOR_BLUE
+         fi
 
-# prepend connection host
-nodetool_full="$nodetool_cmd -h $c_host"
-
-nodetool_full=$(append_auth "$nodetool_full")
-
-# use string functions to extract Cassandra version number
-str=`$nodetool_full version 2>&1`
-if [[ "$str" == *Failed* ]] || [[ "$str" == *resolve* ]]; then
-   echo "error: cannot connect to '$c_host'"
-   exit 1
-fi
-
-c_version=${str##* }
+         l=${line/$match/$pre$match$post}
+         echo $l
+      else
+         echo $line
+      fi
+  done
+}
 
 parse_var() {
    s=$1
@@ -223,7 +259,7 @@ parse_var() {
 
    printf %s "$s" | while IFS= read -r line || [ -n "$line" ]
 # we are in a subshell, so variable settings will be forgotten. either use echo or write to a file for persistence
-   do 
+   do
       if [[ $line =~ $re ]] ; then
          echo -n "${BASH_REMATCH[1]} "
       fi
@@ -239,7 +275,7 @@ get_hosts() {
 
 get_nodes() {
    s=$1
-   re="[DU][NLJM]  .* ($UUID)"
+   re="[DU][NLJM]  .* ($RE_UUID)"
 
    parse_var "$s" "$re"
 }
@@ -260,16 +296,57 @@ get_cfs() {
    parse_var "$s" "$re"
 }
 
-# continue validating command line args
-if [ -n "$c_keyspace" ]; then
-   keyspaces_cache=$(get_keyspaces)
-   c_keyspace_tmp=" $c_keyspace "
-   if [[ " $keyspaces_cache " != *$c_keyspace_tmp* ]]; then
-      echo "error: unknown keyspace '$c_keyspace'"
-      do_usage
-      exit 2
+validate_cmd_line() {
+   if [ -z "$c_host" ]; then
+      c_host="localhost"
+   else
+      if [ "$c_host" = "-h" ]; then
+         show_usage
+         exit 1
+      fi
+      validate "host" "$c_host" 0 1
    fi
-fi
+
+   # when nodetool connects to c_host, it will do the final name resolution and auth validations
+
+   # prepend connection host
+   nodetool_full="$nodetool_cmd -h $c_host"
+
+   nodetool_full=$(append_auth "$nodetool_full")
+
+   # use string functions to extract Cassandra version number
+   str=`$nodetool_full version 2>&1`
+   if [[ "$str" == *Failed* ]] || [[ "$str" == *resolve* ]]; then
+      echo "error: cannot connect to '$c_host'"
+      exit 1
+   fi
+
+   c_version=${str##* }
+
+   if [ -n "$c_keyspace" ]; then
+      keyspaces_cache=$(get_keyspaces)
+      c_keyspace_tmp=" $c_keyspace "
+      if [[ " $keyspaces_cache " != *$c_keyspace_tmp* ]]; then
+         echo "error: unknown keyspace '$c_keyspace'"
+         show_usage
+         exit 2
+      fi
+   fi
+
+   if [ ${#c_option} -gt 1 ]; then
+      show_usage
+      exit 3
+   elif [ "$c_option" = "q" ]; then
+      exit
+   elif [ "$c_option" = "2" ]; then
+      select_colors_bold
+      in=""
+   else
+      in=$c_option
+   fi
+}
+
+validate_cmd_line
 
 do_status() {
    s=$1
@@ -277,26 +354,26 @@ do_status() {
    if [ $s -eq 0 ]; then
       echo -e "info: nodetool was successful!"
    else
-      echo -e "error: nodetool was not successful, exit status was $s"
+      c_error "nodetool was not successful, exit status was $s"
    fi
 }
 
-do_banner() {
+show_banner() {
    c_keyspace_tmp=""
    [ -n "$c_keyspace" ] && c_keyspace_tmp="/$c_keyspace"
 
    echo -e "$program $version (c) James Briggs $(date), connected to /$c_host$c_keyspace_tmp\n$c_info"
 }
 
-do_help() {
+show_help() {
    clear_screen
 
-   banner=$(do_banner)
+   banner=$(show_banner)
 
    echo -e "$banner
-${HELP_COLOR_BOLD}Help for Interactive Commands ${HELP_COLOR_SAFE}(Items in green are safe, or reporting-only commands)${HELP_COLOR_RESET}
+${HELP_COLOR_BOLD}Help for Interactive Commands ${HELP_COLOR_SAFE}(Items in green are safe, or reporting-only commands)${COLOR_RESET}
 
-   ${HELP_COLOR_BOLD}Cluster-wide Commands${HELP_COLOR_RESET}
+   ${HELP_COLOR_BOLD}Cluster-wide Commands${COLOR_RESET}
       ${HELP_COLOR_SAFE}C   nodetool cfhistograms keyspace column family |
                    cfstats [keyspace].[column family] |
                    describecluster |
@@ -305,7 +382,7 @@ ${HELP_COLOR_BOLD}Help for Interactive Commands ${HELP_COLOR_SAFE}(Items in gree
                    rangekeysample | tpstats
       R   nodetool ring [keyspace] |
                    describering [keyspace]
-      G   nodetool getstreamthroughput | getcompactionthroughput | gossipinfo${HELP_COLOR_RESET}
+      G   nodetool getstreamthroughput | getcompactionthroughput | gossipinfo${COLOR_RESET}
       f   nodetool flush [keyspace] [column family ...]
       r   nodetool -h issue_host repair [-par] [-local] [-dc DC1,DC2 ...] keyspace [column family ...] [-st token] [-et token]
       U   nodetool rebuild [DC] |
@@ -317,7 +394,7 @@ ${HELP_COLOR_BOLD}Help for Interactive Commands ${HELP_COLOR_SAFE}(Items in gree
                    setstreamthroughput [MB] |
                    settraceprobability [0.000:1.000]
 
-   ${HELP_COLOR_BOLD}Node-specific Commands (target_host is a specific Cassandra node)${HELP_COLOR_RESET}
+   ${HELP_COLOR_BOLD}Node-specific Commands (target_host is a specific Cassandra node)${COLOR_RESET}
       B   nodetool -h target_host clearsnapshot | snapshot
       d   nodetool -h target_host drain
       j   nodetool -h target_host join
@@ -331,7 +408,7 @@ ${HELP_COLOR_BOLD}Help for Interactive Commands ${HELP_COLOR_SAFE}(Items in gree
       s   nodetool -h target_host scrub [skip] [keyspace] [column family ...]
       ${HELP_COLOR_SAFE}S   nodetool -h target_host compactionhistory | compactionstats | info |
                                   getLoggingLevels | netstats | proxyhistograms |
-                                  statusbinary | statusthrift | version${HELP_COLOR_RESET}
+                                  statusbinary | statusthrift | version${COLOR_RESET}
       u   nodetool -h target_host upgradesstables [keyspace] [column family ...]
       x   nodetool -h target_host removenode status|force|<ID>
       Z   nodetool -h target_host decommission |
@@ -345,9 +422,9 @@ ${HELP_COLOR_BOLD}Help for Interactive Commands ${HELP_COLOR_SAFE}(Items in gree
                                   pausehandoff          | resumehandoff  |
                                   resetlocalschema      | truncatehints [endpoint ...]
 
-   ${HELP_COLOR_BOLD}Miscellaneous Commands${HELP_COLOR_RESET}
-      ${HELP_COLOR_SAFE}h   help     1   light colors   2   bold colors   q   quit${HELP_COLOR_RESET}"
-   press_any_key
+   ${HELP_COLOR_BOLD}Miscellaneous Commands${COLOR_RESET}
+      ${HELP_COLOR_SAFE}h   help     1   light colors   2   bold colors   q   quit${COLOR_RESET}"
+   c_press_any_key
    continue
 }
 
@@ -356,24 +433,25 @@ msg_confirm() {
 
    [ "$flag_confirm_nodetool_operations" -eq 0 ] && return 1
 
-   clear_stdin
-   read -n 1 -e -p "Are you sure? [y/N]: " yn
-  
-   if [[ "$yn" == *y* ]]; then
+   c_yn "Are you sure?"
+   if [ "$yn" -eq 1 ]; then
       echo -e "\nRunning ...\n"
    else
-      echo -e "\nAborting."
+      c_error "You chose to cancel operation."
       continue
    fi
 }
 
 tidy_spaces() {
+# use bashism to parse string to an array, then squash array to a string single-spaces the elements
    ary=($1)
    echo -n "${ary[@]}"
 }
    
 msg_running() {
-   echo -e "\nReady to run '$action'\n"
+   msg=$1
+
+   echo -e "\nReady to run '$msg'"
 }
 
 run_it() {
@@ -395,7 +473,7 @@ run_it() {
    fi
 
    do_status $?
-   press_any_key
+   c_press_any_key
    continue
 }
 
@@ -425,31 +503,18 @@ get_keyspace() {
    fi
 }
 
-get_multiple_keyspace() {
+get_multiple_keyspaces() {
    op=$1
    all=$2
+   type="keyspace"
 
-   keys_remaining=" $keyspaces_cache "
+   items_remaining="$keyspaces_cache"
 
-   while : ; do
-      keys_remaining=$(tidy_spaces "$keys_remaining")
-      [ -z "$keys_remaining" ] && break
-      keys_remaining=" $keys_remaining "
+   out=""
 
-      get_keyspace "$op" "$N_CANCEL" "$MSG_DONE" "$keys_remaining"
+   get_multiple_items_with_recursion $op $all $type
 
-      if [ "$keyspace" = "$MSG_CANCEL" ]; then
-         break
-      elif [ "$keyspace" = "$MSG_DONE" ]; then
-         break
-      else
-         keyspaces="$keyspaces $keyspace"
-      fi
-      keys_remaining=${keys_remaining// $keyspace / }
-   done
-   [ $keyspace = "$MSG_CANCEL" ] && continue
-
-   $keyspace=$keyspaces
+   keyspace="$out"
 }
 
 get_cf() {
@@ -477,33 +542,50 @@ get_cf() {
 get_multiple_cf() {
    op=$1
    all=$2
+   type="cf"
 
    cfs=$(get_cfs "$keyspace")
-
-   cfs_remaining=" $cfs "
+   items_remaining=" $cfs "
 
    out=""
 
-   while : ; do
-      cfs_remaining=$(tidy_spaces "$cfs_remaining")
-      [ -z "$cfs_remaining" ] && break
-      cfs_remaining=" $cfs_remaining "
-
-      get_cf "$op" "$N_CANCEL" "$MSG_DONE" "$cfs_remaining"
-      if [ "$cf" = "$MSG_CANCEL" ]; then
-         break
-      elif [ "$cf" = "$MSG_DONE" ]; then
-         break
-      else
-         out="$out $cf"
-      fi
-
-      cfs_remaining=${cfs_remaining// $cf / }
-   done
-
-   [ $cf = "$MSG_CANCEL" ] && continue
+   get_multiple_items_with_recursion $op $all $type
 
    cf="$out"
+}
+
+get_multiple_items_with_recursion() {
+   op=$1
+   all=$2
+   type=$3
+
+   items_remaining=$(tidy_spaces "$items_remaining")
+   if [ -n "$items_remaining" ]; then
+      items_remaining=" $items_remaining "
+ 
+      if [ "$type" = "cf" ]; then
+         get_cf "$op" "$N_CANCEL" "$MSG_DONE" "$items_remaining"
+         item=$cf
+      elif [ "$type" = "keyspace" ]; then
+         get_keyspace "$op" "$N_CANCEL" "$MSG_DONE" "$items_remaining"
+         item=$keyspace
+      else
+         c_error "invalid type '$type'"
+         exit 6
+      fi
+
+      if [ "$item" = "$MSG_CANCEL" ]; then
+         continue # unwind many stack levels
+      elif [ "$item" = "$MSG_DONE" ]; then
+         items="$out" # unwind recursion stack once
+      else
+         out="$out $item"
+         if [ -n "$items_remaining" ]; then
+            items_remaining=${items_remaining// $item / }
+            get_multiple_items_with_recursion $op $all $type # we cannot use a do loop or continue will not work, and there's no goto in bash, so use recursion as a last resort
+         fi
+      fi
+   fi
 }
 
 do_flush_exec() {
@@ -526,13 +608,8 @@ do_misc_B() {
    op=$(c_select "clearsnapshot snapshot")
    [ "$op" = "$MSG_CANCEL" ] && continue
 
-   echo -e "\nChoose a node $op option: "
-   file=$(c_select "filename nofilename")
-   if [ "$file" = "$MSG_CANCEL" ]; then
-      continue
-    elif [ "$file" = "nofilename" ]; then
-      file=""
-   else 
+   c_yn "Do you want to enter a snapshot filename?"
+   if [ "$yn" -eq 1]; then
       echo
       read -e -p "Which snapshot filename? ["$MSG_CANCEL"]: " filename
       if [ -z "$filename" ]; then
@@ -541,7 +618,7 @@ do_misc_B() {
       filename="-f $filename"
    fi
 
-   get_multiple_keyspace "$op" "$N_CANCEL"
+   get_multiple_keyspaces "$op" "$N_CANCEL"
 
 #   if [ "$op" = "snapshot" ]; then
 # not sure why nodetool snapshot accepts multiple keyspaces plus a single cf
@@ -647,26 +724,45 @@ do_refresh_exec() {
    run_it "refresh $keyspace $cf" "$nodeid"
 }
 
+c_yn() {
+   msg=$1
+
+   echo
+   clear_stdin
+   read -n 1 -e -p "$msg [yes/NO/cancel]: " yn # also could do select "cancel yes no" to force user to type return
+
+   if [[ "$yn" == *y* ]]; then
+      yn=1
+   elif [[ "$yn" == *c* ]]; then
+      continue
+   else
+      yn=0
+   fi
+}
+
 do_repair_exec() {
    nodeid=""
    keyspace=""
    cf=""
    par=""
    dc=""
+   st=""
+   et=""
 
-   select_node "issue repair"
-
-   echo
-   par=$(c_select "PARALLEL NOT_PARALLEL")
-   if [ "$par" = "$MSG_CANCEL" ]; then
+   c_yn "All nodes in the repair DC/DCs must be UP. Are all nodes UP?"
+   if [ "$yn" -ne 1 ]; then
+      c_error "All nodes in the repair DC/DCs must be UP."
+      c_press_any_key
       continue
-   elif [ "$par" = "PARALLEL" ]; then
-      par="-par"
-   else
-      par=""
    fi
 
    echo
+   select_node "issue repair (this node's DC will be the default local DC for this repair)"
+
+   c_yn "Do you want to repair in parallel?"
+   [ "$yn" -eq 1 ] && par="-par"
+
+   echo -e "\nDo you want the repair to be in the local DC, or other DCs?"
    dc=$(c_select "LOCAL DCs")
 
    if [ "$dc" = "CANCEL" ]; then
@@ -681,10 +777,28 @@ do_repair_exec() {
       [ -n "$dc" ] && dc="-dc $dc"
    fi
    
+   c_yn "Do you want to enter a start token?"
+   if [ "$yn" -eq 1 ]; then
+      echo
+      read -e -p "What is the start token? [$MSG_CANCEL]: " st
+      [ -z "$st" ] && continue
+      validate "token" $st 0 1
+      st="-st $st"
+   fi
+
+   c_yn "Do you want to enter an end token?"
+   if [ "$yn" -eq 1 ]; then
+      echo
+      read -e -p "What is the end token? [$MSG_CANCEL]: " et
+      [ -z "$et" ] && continue
+      validate "token" $et 0 1
+      et="-et $et"
+   fi
+
    get_keyspace "repair" "$N_CANCEL"
    [ -n "$keyspace" ] && get_multiple_cf "repair" "$N_ALL"
 
-   run_it "repair $par $dc $keyspace $cf" "$nodeid"
+   run_it "repair $par $dc $keyspace $cf $st $et" "$nodeid"
 }
 
 do_upgradesstables_exec() {
@@ -730,7 +844,7 @@ do_removenode_exec() {
    nodeid=$(c_select "$ids")
    [ "$nodeid" = "$MSG_CANCEL" ] && continue
 
-   if [[ "$nodeid" =~ "($UUID)" ]]; then
+   if [[ "$nodeid" =~ "($RE_UUID)" ]]; then
       nodeid="${BASH_REMATCH[1]}"
    fi
 
@@ -774,31 +888,17 @@ do_scrub_exec() {
    nodeid=""
    keyspace=""
    cf=""
+   yn=""
    skip=""
+   ns=""
 
    select_node "scrub"
 
-   echo -e "\nDo you want to skip corrupted sstables? [$MSG_CANCEL] "
-   skip=$(c_select "skip noskip")
+   c_yn "Do you want to skip corrupted sstables?"
+   [ "$yn" -eq 1 ] && skip="-s"
 
-   if [ "$skip" = "$MSG_CANCEL" ]; then
-      continue
-   elif [ "$skip" = "skip" ]; then
-      skip="-s"
-   else
-      skip=""
-   fi
-
-   echo -e "\nDo you want to skip snapshots before scrub? [$MSG_CANCEL] "
-   ns=$(c_select "skip noskip")
-
-   if [ "$ns" = "$MSG_CANCEL" ]; then
-      continue
-   elif [ "$ns" = "skip" ]; then
-      ns="-ns"
-   else
-      ns=""
-   fi
+   c_yn "Do you want to skip snapshots before scrub?"
+   [ "$yn" -eq 1 ] && ns="-ns"
 
    get_keyspace "scrub" "$N_ALL"
    [ -n "$keyspace" ] && get_multiple_cf "scrub" "$N_ALL"
@@ -846,13 +946,8 @@ read_host_and_exec() {
    select_node "$option"
 
    if [ "$option" = "info" ]; then
-      clear_stdin
-      echo
-      read -n 1 -e -p "Do you want all token information? [y/N]: " yn
-
-      if [[ "$yn" == *y* ]]; then
-         token_option="-T"
-      fi
+      c_yn "Do you want all token information?"
+      [ "$yn" -eq 1 ] && token_option="-T"
    elif [ "$option" = "disableautocompaction" ] || [ "$option" = "enableautocompaction" ]; then
       get_keyspace "$option" "$N_ALL"
       [ -n "$keyspace" ] && get_multiple_cf "$option" "$N_ALL"
@@ -982,28 +1077,24 @@ if [[ $str =~ $regex ]]; then
    c_partitioner=${c_partitioner##*.}
    c_info="Cluster: $c_name v$c_version using $c_snitch/$c_partitioner"
 else
-   c_info="No cluster name found."
+   echo "error: no cluster name found."
+   exit 7
 fi
 
-first_run=1
-n_views=0
 sprite="$sprite_state_on"
 
 while true; do
-   # draw screen into an off-screen buffer to avoid screen redraw flicker
-   out=`$nodetool_full status $2 |
-      GREP_COLOR=$GREP_COLOR_GREEN $grep_cmd --color=always '^UN .*\|$' |
-      GREP_COLOR=$GREP_COLOR_RED   $grep_cmd --color=always 'DN .*\|$' |
-      GREP_COLOR=$GREP_COLOR_BLUE  $grep_cmd --color=always '[UD][LJM] .*\|$'`
-
-   out=${out/Note: Ownership information*specify a keyspace/} # remove informational message if user doesn't specify a keyspace name
+   # draw screen into an off-screen buffer to reduce flicker
+   nf=`$nodetool_full status $2`
+   nf=${nf/Note: Ownership information*specify a keyspace/} # remove informational message if user doesn't specify a keyspace name
+   out=$(do_colorize "$nf")
 
    # cache cfstats and update periodically
    if [ "$first_run" -eq 1 ] || [ $(( $n_views % 100 )) -eq 0 ]; then
-      hosts_cache=$(get_hosts "$out")
-      nodes_cache=$(get_nodes "$out")
+      hosts_cache=$(get_hosts "$nf")
+      nodes_cache=$(get_nodes "$nf")
       keyspaces_cache=$(get_keyspaces)
-      # to cache cfs, we would have to save like [ keyspace1 cfs ...], [ keyspace2 cfs ...],
+      # not caching cfs, since we would have to save like [ keyspace1 cfs ...], [ keyspace2 cfs ...],
       first_run=0
    fi
    
@@ -1015,77 +1106,82 @@ while true; do
 
    clear_screen
 
-   banner=$(do_banner)
+   banner=$(show_banner)
 
-   echo -n -e "$banner\n$out\n"
+   echo -e "$banner\n$out"
 
-   TMOUT=$timeout # use the TMOUT envariable since read -t $timeout seems flaky
+   if [ -z "$in" ]; then # in can be populated from ARG3 or this read loop
+      TMOUT=$timeout # use the TMOUT envariable since read -t $timeout seems flaky
+      read -s -n 1 -p "Press 'h' for help, 'q' to quit:$sprite" in
+      TMOUT=0
+   fi
+
+   op=$in
    in=""
-   read -s -n 1 -p "Press 'h' for help, 'q' to quit:$sprite" in
-   TMOUT=0
 
    let n_views++
 
-   [ -n "$in" ] && echo -e "\n"
+   [ -n "$op" ] && echo
 
-   # Big Switch
-   if [ "$in" = "1" ]; then
-      set_colors_normal
-   elif [ "$in" = "2" ]; then
-      set_colors_bold
-   elif [ "$in" = "B" ]; then # misc cf nodetool snapshot
+   # Big Switch - can be replaced later with table-driven design
+   if [ -z "$op" ]; then
+      sleep $timeout
+      continue
+   elif [ "$op" = "1" ]; then
+      select_colors_normal
+   elif [ "$op" = "2" ]; then
+      select_colors_bold
+   elif [ "$op" = "B" ]; then # misc cf nodetool snapshot
       do_misc_B
-   elif [ "$in" = "c" ]; then # nodetool -h target_node compact [keyspace] [column family ...]
+   elif [ "$op" = "c" ]; then # nodetool -h target_node compact [keyspace] [column family ...]
       do_compact_exec
-   elif [ "$in" = "C" ]; then # misc cf nodetool reports
+   elif [ "$op" = "C" ]; then # misc cf nodetool reports
       do_misc_C
-   elif [ "$in" = "d" ]; then # nodetool -h target_node drain
+   elif [ "$op" = "d" ]; then # nodetool -h target_node drain
       read_host_and_exec drain
-   elif [ "$in" = "f" ]; then # nodetool -h target_node flush [keyspace] [column families ...]
+   elif [ "$op" = "f" ]; then # nodetool -h target_node flush [keyspace] [column families ...]
       do_flush_exec
-   elif [ "$in" = "m" ]; then # nodetool -h target_node move <token>
+   elif [ "$op" = "m" ]; then # nodetool -h target_node move <token>
       do_move_exec
-   elif [ "$in" = "G" ]; then # misc get* nodetool commands
+   elif [ "$op" = "G" ]; then # misc get* nodetool commands
       do_misc_G
-   elif [ "$in" = "h" ]; then # help
-      do_help
-   elif [ "$in" = "i" ]; then # nodetool -h target_node rebuild_index [keyspace] [column family] [index ...]
+   elif [ "$op" = "h" ]; then # help
+      show_help
+   elif [ "$op" = "i" ]; then # nodetool -h target_node rebuild_index [keyspace] [column family] [index ...]
       do_rebuild_index_exec
-   elif [ "$in" = "I" ]; then # misc invalidate nodetool commands
+   elif [ "$op" = "I" ]; then # misc invalidate nodetool commands
       do_misc_I
-   elif [ "$in" = "j" ]; then # nodetool -h target_node join
+   elif [ "$op" = "j" ]; then # nodetool -h target_node join
       read_host_and_exec join
-   elif [ "$in" = "f" ]; then # nodetool -h target_node refresh [keyspace] [column family]
+   elif [ "$op" = "f" ]; then # nodetool -h target_node refresh [keyspace] [column family]
       do_refresh_exec
-   elif [ "$in" = "k" ]; then # nodetool -h target_node cleanup [keyspace] [column family ...]
+   elif [ "$op" = "k" ]; then # nodetool -h target_node cleanup [keyspace] [column family ...]
       do_cleanup_exec
-   elif [ "$in" = "p" ]; then # nodetool -h target_node stop <compaction level>
+   elif [ "$op" = "p" ]; then # nodetool -h target_node stop <compaction level>
       do_stop_exec
-   elif [ "$in" = "q" ]; then # quit
+   elif [ "$op" = "q" ]; then # quit
       exit
-   elif [ "$in" = "r" ]; then # nodetool -h target_node repair ...
+   elif [ "$op" = "r" ]; then # nodetool -h target_node repair ...
       do_repair_exec
-   elif [ "$in" = "R" ]; then # misc ring nodetool commands
+   elif [ "$op" = "R" ]; then # misc ring nodetool commands
       do_misc_R
-   elif [ "$in" = "s" ]; then # nodetool -h target_node scrub [skip] [keyspace] [column family ...]
+   elif [ "$op" = "s" ]; then # nodetool -h target_node scrub [skip] [keyspace] [column family ...]
       do_scrub_exec
-   elif [ "$in" = "S" ]; then # misc status nodetool commands
+   elif [ "$op" = "S" ]; then # misc status nodetool commands
       do_misc_S
-   elif [ "$in" = "t" ]; then # nodetool -h target_node taketoken <token> [token ...]
+   elif [ "$op" = "t" ]; then # nodetool -h target_node taketoken <token> [token ...]
       do_taketoken_exec
-   elif [ "$in" = "u" ]; then # nodetool -h target_node upgradesstables [keyspace] [column family]
+   elif [ "$op" = "u" ]; then # nodetool -h target_node upgradesstables [keyspace] [column family]
       do_upgradesstables_exec
-   elif [ "$in" = "U" ]; then # misc setting nodetool commands
+   elif [ "$op" = "U" ]; then # misc setting nodetool commands
       do_misc_U
-   elif [ "$in" = "x" ]; then # nodetool -h target_node removenode status|force|<ID>
+   elif [ "$op" = "x" ]; then # nodetool -h target_node removenode status|force|<ID>
       do_removenode_exec
-   elif [ "$in" = "Z" ]; then # misc enable and disable nodetool commands
+   elif [ "$op" = "Z" ]; then # misc enable and disable nodetool commands
       do_misc_Z
-   elif [ -n "$in" ]; then # other characters cause screen to update more quickly by skipping the sleep
+   elif [ -n "$op" ]; then # other characters cause screen to update more quickly by skipping the sleep
       continue
    fi
-
-   sleep $timeout
 done
 
 exit
