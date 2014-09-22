@@ -14,6 +14,10 @@
 
 version="0.7"
 
+# set -e # not happy with select and continue?
+set -o pipefail
+set -u
+
 ### start of user-configurable settings ###
 
 # bash read timeout feature
@@ -83,9 +87,9 @@ in=""
 keyspace=""
 op=""
 yn=""
-c_host=$1
-c_keyspace=$2
-c_option=$3
+c_host=${1:-"localhost"}
+c_keyspace=${2:-""}
+c_option=${3:-""}
 first_run=1
 n_views=0
 program=${0##*/} # extract basename from the full pathname ($0)
@@ -228,7 +232,10 @@ append_auth() {
    cmd=$1
 
    # append authentication credentials if set in cassandra-env.sh
-   [ -z "$JMX_USERNAME" ] || cmd="$cmd -u $JMX_USERNAME -pw $JMX_PASSWORD"
+   if env | grep -q ^JMX_USERNAME=
+   then
+      cmd="$cmd -u $JMX_USERNAME -pw $JMX_PASSWORD"
+   fi
 
    echo -n "$cmd" # bash doesn't have a real function return capability, so echo the return value for capture by the caller
 }
@@ -305,15 +312,11 @@ get_cfs() {
 }
 
 validate_cmd_line() {
-   if [ -z "$c_host" ]; then
-      c_host="localhost"
-   else
-      if [ "$c_host" = "-h" ]; then
-         show_usage
-         exit 1
-      fi
-      validate "host" "$c_host" 0 1
+   if [ "$c_host" = "-h" ]; then
+      show_usage
+      exit 1
    fi
+   validate "host" "$c_host" 0 1
 
    # when nodetool connects to c_host, it will do the final name resolution and auth validations
 
@@ -324,7 +327,7 @@ validate_cmd_line() {
 
    # use string functions to extract Cassandra version number
    str=`$nodetool_full version 2>&1`
-   if [[ "$str" == *Failed* ]] || [[ "$str" == *resolve* ]]; then
+   if [[ "$str" == *error* ]] || [[ "$str" == *Failed* ]] || [[ "$str" == *resolve* ]]; then
       echo "error: cannot connect to '$c_host'"
       exit 1
    fi
@@ -342,6 +345,7 @@ validate_cmd_line() {
    fi
 
    if [ ${#c_option} -gt 1 ]; then
+      echo "error: unknown command"
       show_usage
       exit 3
    elif [ "$c_option" = "q" ]; then
@@ -451,9 +455,11 @@ msg_confirm() {
 }
 
 tidy_spaces() {
+   s=${1:-""}
+
 # bashism to trim spaces: parse string to an array, then squash array back to a string to trim and single-space
-   ary=($1)
-   echo -n "${ary[@]}"
+   declare -a ary=($s)
+   echo -n "${ary[@]:+${ary[@]}}" # bashism to make set -u happy
 }
    
 msg_running() {
@@ -465,10 +471,9 @@ msg_running() {
 log_it() {
    cmd=$1
    stage=$2
-   status=$3
+   status=${3:-0}
    dt=$4
 
-   [ -z "$status" ] && status=0
    [ -z "$dt" ] && dt="$(date +"$DT_FMT")"
 
    if [ -n "$logfile" ]; then
@@ -479,7 +484,7 @@ log_it() {
 
 run_it() {
    action=$1
-   nodeid=$2
+   nodeid=${2:-""}
 
    action=$(tidy_spaces "$action")
 
@@ -537,9 +542,9 @@ do_exec() {
 
 get_keyspace() {
    op=$1
-   all=$2
-   extra=$3
-   keys_remaining=$4
+   all=${2:-""}
+   extra=${3:-""}
+   keys_remaining=${4:-""}
 
    keys="$keyspaces_cache"
    [ -n "$keys_remaining" ] && keys="$keys_remaining"
@@ -555,7 +560,7 @@ get_keyspace() {
 
 get_multiple_keyspaces() {
    op=$1
-   all=$2
+   all=${2:-""}
    type="keyspace"
 
    items_remaining="$keyspaces_cache"
@@ -569,9 +574,9 @@ get_multiple_keyspaces() {
 
 get_cf() {
    op=$1
-   all=$2
-   extra=$3
-   cfs_remaining=$4
+   all=${2:-""}
+   extra=${3:-""}
+   cfs_remaining=${4:-""}
 
    if [ -n "$cfs_remaining" ]; then
       cfs="$cfs_remaining"
@@ -591,7 +596,7 @@ get_cf() {
 
 get_multiple_cf() {
    op=$1
-   all=$2
+   all=${2:-""}
    type="cf"
 
    cfs=$(get_cfs "$keyspace")
@@ -717,6 +722,8 @@ select_node() {
 
    echo -e "\nChoose a host node to $s: "
    
+   nodeid=""
+
    nodeid=$(c_select "$hosts_cache")
    [ "$nodeid" = "$MSG_CANCEL" ] && continue
 }
@@ -740,7 +747,7 @@ do_move_exec() {
 
    select_node "move token"
 
-   read -e -p "What is the token to move? [CANCEL]: " token
+   read -e -p "What is the token to move? [$MSG_CANCEL]: " token
    validate "integer" "$token" 0 1
 
    [ "${token:0:1}" = "-" ] && token="\\\\$token"
@@ -1059,8 +1066,8 @@ read_and_set_number_exec() {
 
 c_select() {
    c=$1
-   all=$2
-   extra=$3
+   all=${2:-""}
+   extra=${3:-""}
 
    meta=""
 
@@ -1075,9 +1082,8 @@ c_select() {
       [ -n "$zop" ] && break
    done
 
-   [ "$zop" = "$MSG_CANCEL" ] && continue
-
    echo -n "$zop"
+   [ "$zop" = "$MSG_CANCEL" ] && continue
 }
 
 do_misc_G() {
@@ -1134,7 +1140,7 @@ sprite="$sprite_state_on"
 
 while true; do
    # draw screen into an off-screen buffer to reduce flicker
-   nf=`$nodetool_full status $2`
+   nf=`$nodetool_full status $c_keyspace`
    nf=${nf/Note: Ownership information*specify a keyspace/} # remove informational message if user doesn't specify a keyspace name
    out=$(do_colorize "$nf")
 
@@ -1161,14 +1167,14 @@ while true; do
 
    if [ -z "$in" ]; then # in can be populated from ARG3 or this read loop
       TMOUT=$timeout # use the TMOUT envariable since read -t $timeout seems flaky
-      read -s -n 1 -p "Press 'h' for help, 'q' to quit:$sprite" in
+      read -t $timeout -s -n 1 -p "Press 'h' for help, 'q' to quit:$sprite" in
       TMOUT=0
    fi
 
    op=$in
    in=""
 
-   let n_views++
+    (( n_views+=1 ))
 
    [ -n "$op" ] && echo
 
