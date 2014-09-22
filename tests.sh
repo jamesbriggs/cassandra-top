@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# usage: ./tests host
+# usage: ./tests.sh [host=localhost]
 
 HOST=${1:-localhost}
 HOST_KNOWN_BAD="1.2.3.4"
@@ -48,5 +48,5 @@ out=`$program $HOST system zzz`
 assert_contains "$out" "unknown command"
 
 # end of test suite
-assert_end examples
+assert_end cass_top
 

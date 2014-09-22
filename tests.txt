@@ -1,5 +1,19 @@
+# invalid assignment syntax
+
 $x=5
+$xx=5
+ $y=6
+ $yy=6
+$z = 7
+ $zz = 7
+
+# invalid hard-coded message strings
+
 [OK]
+ [OK]
 [CANCEL]
+ [CANCEL]
 [DONE]
+ [DONE]
 [ALL]
+ [ALL]
