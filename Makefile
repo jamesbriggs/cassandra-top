@@ -8,3 +8,4 @@ test: tests.sh assert.sh
 
 assert.sh:
 	wget -q -T 15 --no-check-certificate https://raw.githubusercontent.com/lehmannro/assert.sh/master/assert.sh
+

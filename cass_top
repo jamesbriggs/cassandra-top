@@ -10,7 +10,8 @@
 #    - the error message "nodetool: line nnn: [: XXX unary operator expected" means multiple nodetool args were double-quoted together, confusing nodetool
 #    - avoid calling nodetool casually: nodetool status can take seconds.
 #    - it's ugly-looking, but string pasting can be used to one-line read formatting like this: read -e -p $'\n'"What is the DC? "
-#    - bash -x cass_top is surprisingly useful for tracing
+#    - bash -x cass_top is surprisingly useful for tracing, especially if you insert exit immediately after the code you're debugging
+#    - summary of bash read options: http://ss64.com/bash/read.html
 
 version="0.7"
 
@@ -223,7 +224,7 @@ validate() {
       validate_base "not a valid uuid" "$RE_UUID" "$s" "$allow_empty" "$on_error_exit"
 
    else
-       echo "error: invalid validation type '$type'"
+       echo "error: invalid type '$type'"
        exit 4
    fi
 }
@@ -241,7 +242,7 @@ append_auth() {
 }
 
 do_colorize() {
-   s=$1
+   s="$1"
 
    re="^([DU][NLJM] +.*)"
 
@@ -250,7 +251,7 @@ do_colorize() {
 
    printf %s "$s" | while IFS= read -r line || [ -n "$line" ]; do
 # we are in a subshell, so variable settings will be forgotten. either use echo or write to a file for persistence
-      if [[ "$line" =~ $re ]]; then
+      if [[ $line =~ $re ]]; then
          match=${BASH_REMATCH[0]}
          if [ "${match:0:3}" = "UN " ]; then
             pre=$DISPLAY_COLOR_GREEN
@@ -261,9 +262,9 @@ do_colorize() {
          fi
 
          l=${line/$match/$pre$match$post}
-         echo $l
+         echo "$l"
       else
-         echo $line
+         echo "$line"
       fi
   done
 }
@@ -327,7 +328,7 @@ validate_cmd_line() {
 
    # use string functions to extract Cassandra version number
    str=`$nodetool_full version 2>&1`
-   if [[ "$str" == *error* ]] || [[ "$str" == *Failed* ]] || [[ "$str" == *resolve* ]]; then
+   if [[ $str =~ error ]] || [[ $str =~ Failed ]] || [[ $str =~ resolve ]]; then
       echo "error: cannot connect to '$c_host'"
       exit 1
    fi
@@ -445,7 +446,7 @@ msg_confirm() {
 
    [ "$flag_confirm_nodetool_operations" -eq 0 ] && return 1
 
-   c_yn "Are you sure?"
+   c_confirm "Are you sure?"
    if [ "$yn" -eq 1 ]; then
      echo -n ""
    else
@@ -663,7 +664,7 @@ do_misc_B() {
    op=$(c_select "clearsnapshot snapshot")
    [ "$op" = "$MSG_CANCEL" ] && continue
 
-   c_yn "Do you want to enter a snapshot filename?"
+   c_confirm "Do you want to enter a snapshot filename?"
    if [ "$yn" -eq 1]; then
       echo
       read -e -p "Which snapshot filename? ["$MSG_CANCEL"]: " filename
@@ -781,16 +782,17 @@ do_refresh_exec() {
    run_it "refresh $keyspace $cf" "$nodeid"
 }
 
-c_yn() {
+c_confirm() {
    msg=$1
 
    echo
    clear_stdin
    read -n 1 -e -p "$msg [yes/NO/cancel]: " yn # also could do select "cancel yes no" to force user to type return
+   echo
 
-   if [[ "$yn" == *y* ]]; then
+   if [[ $yn =~ ^[Yy]$ ]]; then
       yn=1
-   elif [[ "$yn" == *c* ]]; then
+   elif [[ $yn =~ ^[Cc]$ ]]; then
       continue
    else
       yn=0
@@ -808,20 +810,20 @@ do_repair_exec() {
 
    select_node "issue repair (this node's DC will be the default local DC for this repair)"
 
-   c_yn "All nodes in the repair DC/DCs must be up. Are all nodes up?"
+   c_confirm "All nodes in the repair DC/DCs must be up. Are all nodes up?"
    if [ "$yn" -ne 1 ]; then
       c_error "All nodes in the repair DC/DCs must be up."
       c_press_any_key
       continue
    fi
 
-   c_yn "Do you want to repair in parallel?"
+   c_confirm "Do you want to repair in parallel?"
    [ "$yn" -eq 1 ] && par="-par"
 
    echo -e "\nDo you want the repair to be in the local DC, or other DCs?"
    dc=$(c_select "LOCAL DCs")
 
-   if [ "$dc" = "CANCEL" ]; then
+   if [ "$dc" = "$MSG_CANCEL" ]; then
       continue
    elif [ "$dc" = "LOCAL" ]; then
       dc="-local"
@@ -833,7 +835,7 @@ do_repair_exec() {
       [ -n "$dc" ] && dc="-dc $dc"
    fi
    
-   c_yn "Do you want to enter a start token?"
+   c_confirm "Do you want to enter a start token?"
    if [ "$yn" -eq 1 ]; then
       echo
       read -e -p "What is the start token? [$MSG_CANCEL]: " st
@@ -842,7 +844,7 @@ do_repair_exec() {
       st="-st $st"
    fi
 
-   c_yn "Do you want to enter an end token?"
+   c_confirm "Do you want to enter an end token?"
    if [ "$yn" -eq 1 ]; then
       echo
       read -e -p "What is the end token? [$MSG_CANCEL]: " et
@@ -900,7 +902,7 @@ do_removenode_exec() {
    nodeid=$(c_select "$ids")
    [ "$nodeid" = "$MSG_CANCEL" ] && continue
 
-   if [[ "$nodeid" =~ "($RE_UUID)" ]]; then
+   if [[ $nodeid =~ ($RE_UUID) ]]; then
       nodeid="${BASH_REMATCH[1]}"
    fi
 
@@ -950,10 +952,10 @@ do_scrub_exec() {
 
    select_node "scrub"
 
-   c_yn "Do you want to skip corrupted sstables?"
+   c_confirm "Do you want to skip corrupted sstables?"
    [ "$yn" -eq 1 ] && skip="-s"
 
-   c_yn "Do you want to skip snapshots before scrub?"
+   c_confirm "Do you want to skip snapshots before scrub?"
    [ "$yn" -eq 1 ] && ns="-ns"
 
    get_keyspace "scrub" "$N_ALL"
@@ -1002,7 +1004,7 @@ read_host_and_exec() {
    select_node "$option"
 
    if [ "$option" = "info" ]; then
-      c_yn "Do you want all token information?"
+      c_confirm "Do you want all token information?"
       [ "$yn" -eq 1 ] && token_option="-T"
    elif [ "$option" = "disableautocompaction" ] || [ "$option" = "enableautocompaction" ]; then
       get_keyspace "$option" "$N_ALL"
@@ -1167,7 +1169,7 @@ while true; do
 
    if [ -z "$in" ]; then # in can be populated from ARG3 or this read loop
       TMOUT=$timeout # use the TMOUT envariable since read -t $timeout seems flaky
-      read -t $timeout -s -n 1 -p "Press 'h' for help, 'q' to quit:$sprite" in
+      read -s -t "$timeout" -n 1 -p "Press 'h' for help, 'q' to quit:$sprite" in
       TMOUT=0
    fi
 
