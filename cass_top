@@ -1,15 +1,15 @@
 #!/bin/bash
 
 # Program: cass_top
-# Usage: cass_top [connection_host] [keyspace]
+# Usage: cass_top [connection_host=localhost] [keyspace=all] [one-character option=none]
 # License: Copyright 2014 by James Briggs, San Jose, California, USA. Released under Apache 2 software license
 # Github: https://github.com/jamesbriggs/cassandra-top/blob/master/cass_top
 # Date: 2014 09 16
 # Env: Linux bash, vt100/ANSI terminal types
 # Programming Notes:
 #    - the bash "continue" statement is used to jump back to the "while true" read loop throughout this program, even from nested subroutine calls. it works, except when it doesn't.
-#    - the error message "nodetool: line nnn: [: XXX unary operator expected" means multiple nodetool args were double-quoted together, confusing nodetool
-#    - avoid calling nodetool casually: nodetool status can take seconds.
+#    - if you see the error message "nodetool: line nnn: [: XXX unary operator expected" it means multiple nodetool args were double-quoted together, confusing nodetool
+#    - avoid calling nodetool casually: 'nodetool status' can take seconds.
 #    - it's ugly-looking, but string pasting can be used to one-line read formatting like this: read -e -p $'\n'"What is the DC? "
 #    - bash -x cass_top is surprisingly useful for tracing, especially if you insert exit immediately after the code you're debugging
 #    - summary of bash read options: http://ss64.com/bash/read.html
@@ -25,11 +25,11 @@ set -u
 # bash read timeout feature (delay between nodetool status calls)
 timeout=1
 
-# path to find nodetool commmand
+# path to find nodetool commmand. please set it to a full pathname to improve security and performance.
 nodetool_cmd="nodetool"
 
-# where to log nodetool commands (to disable logging, use empty string)
-logfile="/tmp/cass_top.log"
+# where to log nodetool commands (to disable logging, use empty string). See the log_it() function for how to customize logging.
+logfile="$HOME/cass_top.log"
 
 # flag to confirm before running nodetool commands
 flag_confirm_nodetool_operations=1 # 1=confirm, 0=do not confirm
@@ -46,12 +46,14 @@ sprite_state_off=" "
 ### end of of user-configurable settings ###
 
 shopt -s nocasematch # case-insensitive regex matches
+#shopt extdebug
 
 # some variables that are globablly used
 
 # some constants
 RE_HEX="0-9a-f"
 RE_UUID="[$RE_HEX]{8}-[$RE_HEX]{4}-[$RE_HEX]{4}-[$RE_HEX]{4}-[$RE_HEX]{12}"
+RE_STATUS_LINE="[UD][NLJM]  "
 
 DT_FMT="%F %T"
 
@@ -258,7 +260,7 @@ do_colorize() {
       s=${s#*$match}
    fi
 
-   re='([UD][NLJM]  [^
+   re="($RE_STATUS_LINE"'[^
 ]*)'
 
    while [[ $s =~ $re ]]; do
@@ -282,7 +284,7 @@ do_colorize() {
 do_colorize_old() {
    s=$1
 
-   re="^([DU][NLJM] +.*)"
+   re="^($RE_STATUS_LINE.*)"
 
    pre=""
    post=$COLOR_RESET
@@ -307,7 +309,8 @@ do_colorize_old() {
   done
 }
 
-parse_var() {
+# parse_var_regex_slow takes 4x longer than parse_var with read
+parse_var_new() {
    s=${1:-}
    re=${2:-}
 
@@ -327,8 +330,7 @@ parse_var() {
    done
 }
 
-# deprecated function
-parse_var_old() {
+parse_var() {
    s=$1
    re=$2
 
@@ -343,14 +345,14 @@ parse_var_old() {
 
 get_hosts() {
    s=$1
-   re="[DU][NLJM]  ([^ ]+) "
+   re="$RE_STATUS_LINE([^ ]+) "
 
    parse_var "$s" "$re"
 }
 
 get_nodes() {
    s=$1
-   re="[DU][NLJM]  .* ($RE_UUID)"
+   re="$RE_STATUS_LINE.* ($RE_UUID)"
 
    parse_var "$s" "$re"
 }
@@ -541,7 +543,7 @@ log_it() {
    if [ -n "$logfile" ]; then
       # you can customize the logfile name here in case you're running multiple sessions, or to log by cluster name. example:
       # s=${c_name//[[:blank:]]/} # use cluster name, but remove spaces first
-      # logfile="/tmp/cass_top-$s.log"
+      # logfile="$HOME/cass_top-$s.log"
       s="$dt $$ $USER $stage $status '$cmd'"
       echo "$s" >> "${logfile}"
       echo "$s" >> "${logfile}.out"
@@ -1223,6 +1225,7 @@ while true; do
 
    # cache cfstats and update periodically
    if [ "$first_run" -eq 1 ] || [ $(( $n_views % 100 )) -eq 0 ]; then
+      # echo "Loading hosts, nodes and cfstats cache..."
       hosts_cache=$(get_hosts "$nf")
       nodes_cache=$(get_nodes "$nf")
       keyspaces_cache=$(get_keyspaces)
