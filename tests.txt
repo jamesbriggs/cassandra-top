@@ -7,6 +7,20 @@ $xx=5
 $z = 7
  $zz = 7
 
+# malformed regex syntax
+
+if [[ "$s" =~ $re ]]; then
+   echo
+fi
+
+if [[ $s =~ "$re" ]]; then
+   echo
+fi
+
+if [[ "$s" =~ "$re" ]]; then
+   echo
+fi
+
 # invalid hard-coded message strings
 
 [OK]

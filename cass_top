@@ -3,6 +3,7 @@
 # Program: cass_top
 # Usage: cass_top [connection_host] [keyspace]
 # License: Copyright 2014 by James Briggs, San Jose, California, USA. Released under Apache 2 software license
+# Github: https://github.com/jamesbriggs/cassandra-top/blob/master/cass_top
 # Date: 2014 09 16
 # Env: Linux bash, vt100/ANSI terminal types
 # Programming Notes:
@@ -21,22 +22,24 @@ set -u
 
 ### start of user-configurable settings ###
 
-# bash read timeout feature
+# bash read timeout feature (delay between nodetool status calls)
 timeout=1
 
-# where to find commands
+# path to find nodetool commmand
 nodetool_cmd="nodetool"
 
 # where to log nodetool commands (to disable logging, use empty string)
 logfile="/tmp/cass_top.log"
 
-flag_confirm_nodetool_operations=1 # 1=confirm before running nodetool commands, 0=do not confirm
+# flag to confirm before running nodetool commands
+flag_confirm_nodetool_operations=1 # 1=confirm, 0=do not confirm
 
+# general menu message strings
 MSG_CANCEL="CANCEL"
 MSG_ALL="ALL"
 MSG_DONE="DONE"
 
-# animation to show screen is updating because we minimized screen redraw flicker
+# characters to show screen is often updating
 sprite_state_on="_"
 sprite_state_off=" "
 
@@ -242,7 +245,42 @@ append_auth() {
 }
 
 do_colorize() {
-   s="$1"
+   s=${1:-}
+
+   pre=""
+   post=$COLOR_RESET
+   out=""
+
+   # get banner
+   if [[ $s =~ (.*Rack) ]]; then
+      match=${BASH_REMATCH[1]}
+      out=$match
+      s=${s#*$match}
+   fi
+
+   re='([UD][NLJM]  [^
+]*)'
+
+   while [[ $s =~ $re ]]; do
+      out="$out\n"
+      match=${BASH_REMATCH[1]}
+      s=${s#*$match}
+
+      if [ "${match:0:2}" = "UN" ]; then
+         pre=$DISPLAY_COLOR_GREEN
+      elif [ "${match:0:2}" = "DN" ]; then
+         pre=$DISPLAY_COLOR_RED
+      else
+         pre=$DISPLAY_COLOR_BLUE
+      fi
+
+      out="$out$pre$match$post"
+   done
+}
+
+# deprecated function
+do_colorize_old() {
+   s=$1
 
    re="^([DU][NLJM] +.*)"
 
@@ -270,6 +308,27 @@ do_colorize() {
 }
 
 parse_var() {
+   s=${1:-}
+   re=${2:-}
+
+   if [ -z "$re" ]; then
+      echo "error: empty regex"
+      exit 9
+    fi
+
+# match everything before a newline, then an optional newline. we need to do it this way because all matches in bash are greedy
+   re_line='([^
+]*)(
+?)'
+
+   while [[ -n "$s" ]] && [[ $s =~ $re_line ]]; do # need to remove newline here though
+      s=${s#*${BASH_REMATCH[1]}${BASH_REMATCH[2]}}
+      [[ ${BASH_REMATCH[1]} =~ $re ]] && echo -n "${BASH_REMATCH[1]} "
+   done
+}
+
+# deprecated function
+parse_var_old() {
    s=$1
    re=$2
 
@@ -456,11 +515,13 @@ msg_confirm() {
 }
 
 tidy_spaces() {
-   s=${1:-""}
+   s=${1:-}
 
-# bashism to trim spaces: parse string to an array, then squash array back to a string to trim and single-space
-   declare -a ary=($s)
-   echo -n "${ary[@]:+${ary[@]}}" # bashism to make set -u happy
+### bashism to trim spaces: parse string to an array, then squash array back to a string to trim and single-space
+#   declare -a ary=($s)
+#   echo -n "${ary[@]:+${ary[@]}}" # bashism to make set -u happy
+
+   echo -n $s # we want the side-effect of trimming spaces, so do not quote
 }
    
 msg_running() {
@@ -478,8 +539,12 @@ log_it() {
    [ -z "$dt" ] && dt="$(date +"$DT_FMT")"
 
    if [ -n "$logfile" ]; then
-      echo "$dt $$ $USER $stage $status '$cmd'" >> $logfile
-      echo "$dt $$ $USER $stage $status '$cmd'" >> ${logfile}.out
+      # you can customize the logfile name here in case you're running multiple sessions, or to log by cluster name. example:
+      # s=${c_name//[[:blank:]]/} # use cluster name, but remove spaces first
+      # logfile="/tmp/cass_top-$s.log"
+      s="$dt $$ $USER $stage $status '$cmd'"
+      echo "$s" >> "${logfile}"
+      echo "$s" >> "${logfile}.out"
    fi
 }
 
@@ -788,7 +853,7 @@ c_confirm() {
    echo
    clear_stdin
    read -n 1 -e -p "$msg [yes/NO/cancel]: " yn # also could do select "cancel yes no" to force user to type return
-   echo
+#   echo # this would be correct, but then all the read -e "\n..." need to be changed too
 
    if [[ $yn =~ ^[Yy]$ ]]; then
       yn=1
@@ -1141,10 +1206,20 @@ fi
 sprite="$sprite_state_on"
 
 while true; do
+   if [ "$sprite" = "$sprite_state_on" ]; then
+      sprite="$sprite_state_off"
+   else
+      sprite="$sprite_state_on"
+   fi
+
    # draw screen into an off-screen buffer to reduce flicker
    nf=`$nodetool_full status $c_keyspace`
    nf=${nf/Note: Ownership information*specify a keyspace/} # remove informational message if user doesn't specify a keyspace name
-   out=$(do_colorize "$nf")
+   do_colorize "$nf"
+
+   clear_screen
+   show_banner
+   echo -e "$out"
 
    # cache cfstats and update periodically
    if [ "$first_run" -eq 1 ] || [ $(( $n_views % 100 )) -eq 0 ]; then
@@ -1154,18 +1229,6 @@ while true; do
       # not caching cfs, since we would have to save like [ keyspace1 cfs ...], [ keyspace2 cfs ...],
       first_run=0
    fi
-   
-   if [ "$sprite" = "$sprite_state_on" ]; then
-      sprite="$sprite_state_off"
-   else
-      sprite="$sprite_state_on"
-   fi
-
-   clear_screen
-
-   banner=$(show_banner)
-
-   echo -e "$banner\n$out"
 
    if [ -z "$in" ]; then # in can be populated from ARG3 or this read loop
       TMOUT=$timeout # use the TMOUT envariable since read -t $timeout seems flaky

@@ -50,6 +50,30 @@ assert_contains() {
 # do basic syntax check where exit code is expected to be 0
 assert_raises "bash -n $program" 0
 
+# check for malformed assignments, expected to match
+out=`cat tests.txt`
+assert_contains "$out" '\$[a-z0-9_]+=' 0
+
+# check for malformed assignments, expected to not match
+out=`cat cass_top`
+assert_contains "$out" '\$[a-z0-9_]+=' 1
+
+# check for malformed regexes expected to match
+out=`cat tests.txt`
+assert_contains "$out" '" =~ ' 0
+
+# check for malformed regexes, expected to not match
+out=`cat cass_top`
+assert_contains "$out" '" =~ ' 1
+
+# check for malformed regexes expected to match
+out=`cat tests.txt`
+assert_contains "$out" ' =~ "' 0
+
+# check for malformed regexes, expected to not match
+out=`cat cass_top`
+assert_contains "$out" ' =~ "' 1
+
 # connection test with listening server, exit code expected to be 0
 assert_raises "$program $HOST system q" 0
 
@@ -58,14 +82,6 @@ assert_raises "$program $HOST_NOT_LISTENING system q" 1
 
 # connection test with non-reachable server, exit code expected to be 1, but nodetool doesn't have a timeout, so don't run this
 #assert_raises "$program $HOST_NOT_REACHABLE system q" 1
-
-# check for malformed assignments, expected to match
-out=`cat tests.txt`
-assert_contains "$out" '\$[a-z0-9_]+=' 0
-
-# check for malformed assignments, expected to not match
-out=`cat cass_top`
-assert_contains "$out" '\$[a-z0-9_]+=' 1
 
 # check for unknown keyspace, expected to match
 out=`$program $HOST zzzzzz f`
