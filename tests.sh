@@ -3,7 +3,7 @@
 # usage: ./tests.sh [host=localhost]
 
 HOST=${1:-localhost}
-HOST_NOT_LISTENING=${2:-}
+HOST_NOT_LISTENING=${2:-bad}
 HOST_NOT_REACHABLE="1.2.3.4"
 
 program="./cass_top"
@@ -75,13 +75,13 @@ out=`cat cass_top`
 assert_contains "$out" ' =~ "' 1
 
 # connection test with listening server, exit code expected to be 0
-assert_raises "$program $HOST system q" 0
+assert_raises "MOCK=$MOCK $program $HOST system q" 0
 
 # connection test with no listening server, exit code expected to be 1
-assert_raises "$program $HOST_NOT_LISTENING system q" 1
+assert_raises "MOCK=$MOCK $program $HOST_NOT_LISTENING system q" 1
 
 # connection test with non-reachable server, exit code expected to be 1, but nodetool doesn't have a timeout, so don't run this
-#assert_raises "$program $HOST_NOT_REACHABLE system q" 1
+#assert_raises "MOCK=$MOCK $program $HOST_NOT_REACHABLE system q" 1
 
 # check for unknown keyspace, expected to match
 out=`$program $HOST zzzzzz f`

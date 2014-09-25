@@ -13,6 +13,10 @@
 #    - it's ugly-looking, but string pasting can be used to one-line read formatting like this: read -e -p $'\n'"What is the DC? "
 #    - bash -x cass_top is surprisingly useful for tracing, especially if you insert exit immediately after the code you're debugging
 #    - summary of bash read options: http://ss64.com/bash/read.html
+# Security Notes:
+#    - set the full pathname for nodetool
+#    - the only envariables used are HOME TERM USER JMX_USERNAME JMX_PASSWORD, though nodetool could use others like JAVA_HOME and JRE_HOME and
+#      "requires the same environment as cassandra itself, namely the same classpath (including log4j.properties), and a valid storage-conf property."
 
 version="0.7"
 
@@ -47,6 +51,9 @@ sprite_state_off=" "
 
 shopt -s nocasematch # case-insensitive regex matches
 #shopt extdebug
+
+mockmode=${MOCK:-}
+[[ -n $mockmode ]] && nodetool_cmd="./mock_nodetool"
 
 # some variables that are globablly used
 
@@ -1188,10 +1195,7 @@ do_misc_Z() {
 # use string functions to extract cluster name, snitch and partitioner
 str=`$nodetool_full describecluster`
 
-regex="Name: (.*)
-\s+Snitch: (.*Snitch)
-\s+Partitioner: (.*)
-\s+Schema versions:"
+regex='Name: ([a-z0-9 _.-]+).*Snitch: ([a-z0-9 _.-]+Snitch).*Partitioner: ([a-z0-9 _.-]+).*Schema versions:'
 
 if [[ $str =~ $regex ]]; then
    c_name=${BASH_REMATCH[1]}

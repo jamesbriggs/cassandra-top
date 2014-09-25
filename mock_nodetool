@@ -1,0 +1,796 @@
+#!/bin/bash
+
+# mock_nodetool
+
+set -e
+set -u
+
+usage()
+{
+cat << EOF
+usage: java org.apache.cassandra.tools.NodeCmd --host <arg> <command>
+            
+ -a,--include-all-sstables   includes sstables that are already on the
+                             most recent version during upgradesstables
+ -c,--compact                print histograms in a more compact format
+ -cf,--column-family <arg>   only take a snapshot of the specified table
+                             (column family)
+ -dc,--in-dc <arg>           only repair against nodes in the specified
+                             datacenters (comma separated)
+ -et,--end-token <arg>       token at which repair range ends
+ -h,--host <arg>             node hostname or ip address
+ -hosts,--in-host <arg>      only repair against specified nodes (comma
+                             separated)
+ -i,--ignore                 ignore the supplied list of
+                             keyspace.columnfamiles in statistics
+ -local,--in-local-dc        only repair against nodes in the same
+                             datacenter
+ -ns,--no-snapshot           disables snapshot creation for scrub
+ -p,--port <arg>             remote jmx agent port number
+ -par,--parallel             repair nodes in parallel.
+ -pr,--partitioner-range     only repair the first range returned by the
+                             partitioner for the node
+ -pw,--password <arg>        remote jmx agent password
+ -r,--resolve-ip             show node domain names instead of IPs
+ -s,--skip-corrupted         when scrubbing counter tables, skip corrupted
+                             rows
+ -st,--start-token <arg>     token at which repair range starts
+ -T,--tokens                 display all tokens
+ -t,--tag <arg>              optional name to give a snapshot
+ -u,--username <arg>         remote jmx agent username
+
+Available commands
+  cfhistograms <keyspace> <cfname> - Print statistic histograms for a given column family
+  cfstats [keyspace].[cfname] ... - Print statistics on column families. Use the -i flag to ignore the list of column families and display the remaining cfs.
+  cleanup [keyspace] [cfnames] - Run cleanup on one or more column families
+  clearsnapshot [keyspaces...] -t [snapshotName] - Remove snapshots for the specified keyspaces. Either remove all snapshots or remove the snapshots with the given name.
+  compact [keyspace] [cfnames] - Force a (major) compaction on one or more column families
+  compactionhistory      - Print history of compaction
+  compactionstats        - Print statistics on compactions
+  decommission           - Decommission the *node I am connecting to*
+  describecluster        - Print the name, snitch, partitioner and schema version of a cluster.
+  describering [keyspace] - Shows the token ranges info of a given keyspace.
+  disableautocompaction [keyspace] [cfnames] - Disable autocompaction for the given keyspace and column family
+  disablebackup          - Disable incremental backup
+  disablebinary          - Disable native transport (binary protocol)
+  disablegossip          - Disable gossip (effectively marking the node down)
+  disablehandoff         - Disable the future hints storing on the current node
+  disablethrift          - Disable thrift server
+  drain                  - Drain the node (stop accepting writes and flush all column families)
+  enableautocompaction [keyspace] [cfnames] - Enable autocompaction
+  enablebackup           - Enable incremental backup
+  enablebinary           - Reenable native transport (binary protocol)
+  enablegossip           - Reenable gossip
+  enablehandoff          - Reenable the future hints storing on the current node
+  enablethrift           - Reenable thrift server
+  flush [keyspace] [cfnames] - Flush one or more column families
+  getLoggingLevels       - Get the runtime logging levels
+  getcompactionthreshold <keyspace> <cfname> - Print min and max compaction thresholds for a given column family
+  getcompactionthroughput - Print the MB/s throughput cap for compaction in the system
+  getendpoints <keyspace> <cf> <key> - Print the end points that owns the key
+  getsstables <keyspace> <cf> <key> - Print the sstable filenames that own the key
+  getstreamthroughput    - Print the MB/s throughput cap for streaming in the system
+  gossipinfo             - Shows the gossip information for the cluster
+  info [-T/--tokens]     - Print node information (uptime, load, ...)
+  invalidatekeycache     - Invalidate the key cache
+  invalidaterowcache     - Invalidate the row cache
+  join                   - Join the ring
+  move <new token>       - Move node on the token ring to a new token. (for negative tokens, use \\ to escape, Example: move \\-123)
+  netstats [host]        - Print network information on provided host (connecting node by default)
+  pausehandoff           - Pause hints delivery process
+  proxyhistograms        - Print statistic histograms for network operations
+  rangekeysample         - Shows the sampled keys held across all keyspaces.
+  rebuild [src-dc-name] - Rebuild data by streaming from other nodes (similarly to bootstrap)
+  rebuild_index <keyspace> <cf-name> <idx1,idx1> - a full rebuild of native secondary indexes for a given column family. IndexNameExample: Standard3.IdxName,Standard3.IdxName1
+  refresh <keyspace> <cf-name> - Load newly placed SSTables to the system without restart.
+  reloadtriggers         - reload trigger classes
+  removenode status|force|<ID> - Show status of current node removal, force completion of pending removal or remove provided ID
+  repair [keyspace] [cfnames] - Repair one or more column families
+   Use -dc to repair specific datacenters (csv list).
+   Use -et to specify a token at which repair range ends.
+   Use -local to only repair against nodes in the same datacenter.
+   Use -pr to repair only the first range returned by the partitioner.
+   Use -par to carry out a parallel repair.
+   Use -st to specify a token at which the repair range starts.
+  resetlocalschema       - Reset node's local schema and resync
+  resumehandoff          - Resume hints delivery process
+  ring                   - Print information about the token ring
+  scrub [keyspace] [cfnames] [-s|--skip-corrupted] - Scrub (rebuild sstables for) one or more column families.
+   Use -s/--skip-corrupted to skip corrupted rows even when scrubbing
+   tables that use counters.
+  setLoggingLevel        - Set a log level for a given logger. If both classQualifer and level are empty/null, it will reset to the initial configuration
+  setcachecapacity <key-cache-capacity> <row-cache-capacity> - Set global key and row cache capacities (in MB units).
+  setcachekeystosave <key-cache-keys-to-save> <row-cache-keys-to-save> - Set number of keys saved by each cache for faster post-restart warmup. 0 to disable.
+  setcompactionthreshold <keyspace> <cfname> - Set min and max compaction thresholds for a given column family
+  setcompactionthroughput <value_in_mb> - Set the MB/s throughput cap for compaction in the system, or 0 to disable throttling.
+  setstreamthroughput  <value_in_mb> - Set the MB/s throughput cap for streaming in the system, or 0 to disable throttling.
+  settraceprobability [value] - Sets the probability for tracing any given request to value. 0 disables, 1 enables for all requests, 0 is the default
+  snapshot [keyspaces...] -cf [columnfamilyName] -t [snapshotName] - Take a snapshot of the optionally specified column family of the specified keyspaces  using optional name snapshotName
+  status                 - Print cluster information (state, load, IDs, ...)
+  statusbinary           - Status of native transport (binary protocol)
+  statusthrift           - Status of thrift server
+  stop <compaction_type> - Supported types are COMPACTION, VALIDATION, CLEANUP, SCRUB, INDEX_BUILD
+  taketoken <token, ...> - Move the token(s) from the existing owner(s) to this node.  For vnodes only.  Use \\ to escape negative tokens.
+  tpstats                - Print usage statistics of thread pools
+  truncatehints <host-name> - Truncate all hints on the local node, or truncate hints for the endpoint specified.
+  upgradesstables [-a|--include-all-sstables] [keyspace] [cfnames] - Rewrite sstables (for the requested column families) that are not on the current version (thus upgrading them to said current version).
+   Use -a to include all sstables, even those already on the current version.
+  version                - Print cassandra version
+EOF
+}
+
+host=
+port=
+useraname=
+passwd=
+
+while getopts "h:pw:u:" OPTION
+do
+     case $OPTION in
+         h)
+             host=${OPTARG:-}
+             ;;
+         p)
+             port=${OPTARG:-}
+             ;;
+         u)
+             username=${OPTARG:-}
+             ;;
+         w)
+             passwd=${OPTARG:-}
+             ;;
+         ?)
+             usage
+             exit 1
+             ;;
+     esac
+done
+
+if [[ -z $host ]]
+then
+     usage
+     exit 1
+fi
+
+parse() {
+   cmd=${1:-}
+}
+
+args=$@
+shift $((OPTIND-1))
+parse $@
+
+if [[ $host = "bad" ]]; then
+   echo "Cannot resolve 'bad': unknown host"
+   exit 1
+fi
+
+if [[ $cmd = "status" ]]; then
+
+echo -e "Note: Ownership information does not include topology; for complete information, specify a keyspace
+Datacenter: DC1
+===============
+Status=Up/Down
+|/ State=Normal/Leaving/Joining/Moving
+--  Address     Load       Tokens  Owns   Host ID                               Rack
+UN  10.0.1.130  77.86 MB   256     13.7%  9ec944e1-0abf-4334-a32f-c0b947196c77  RAC1
+UN  10.0.1.133  82.71 MB   256     11.8%  8302c6d5-4c88-4695-bbf4-762bc7f24544  RAC2
+UN  10.0.1.134  93.45 MB   256     12.2%  eddb03b2-98d3-46ff-be63-95435414a883  RAC2
+UN  10.0.1.136  68.26 MB   256     12.9%  92d522a3-de98-45e0-b0ab-0baa4a6972dd  RAC2
+UN  10.0.1.137  65.07 MB   256     11.9%  ba667629-d1ee-4c2a-9ea5-59065272f0dc  RAC2
+UN  10.0.1.138  64.65 MB   256     12.0%  c35a2261-a65f-4980-97a2-c4f82e034d4b  RAC1
+UN  10.0.1.140  86.57 MB   256     12.8%  ceb2924f-2e8b-41e9-8af8-2890c7e41ba5  RAC1
+DN  10.0.1.141  56.92 MB   256     12.7%  2a8dde5e-29b0-4a67-8204-40769376c44a  RAC1"
+
+elif [[ $cmd = "version" ]]; then
+   echo "ReleaseVersion: 2.0.9"
+elif [[ $cmd = "getstreamthroughput" ]]; then
+   echo "Current stream throughput: 200 MB/s"
+elif [[ $cmd = "getcompactionthroughput" ]]; then
+   echo "Current compaction throughput: 200 MB/s"
+elif [[ $cmd = "gossipinfo" ]]; then
+   echo "/10.0.1.136
+  generation:1410906006
+  heartbeat:2160361
+  STATUS:NORMAL,-1022224348962756527
+  HOST_ID:92d522a3-de98-45e0-b0ab-0baa4a6972dd
+  RELEASE_VERSION:2.0.9
+  LOAD:7.1601653E7
+  RPC_ADDRESS:10.0.1.136
+  SCHEMA:d9e0f9ae-6221-3987-81fb-1a0134e02b22
+  SEVERITY:0.0
+  DC:DC1
+  NET_VERSION:7
+  RACK:RAC2
+/10.0.1.137
+  generation:1410898647
+  heartbeat:2182667
+  STATUS:NORMAL,-1062262977753289953
+  HOST_ID:ba667629-d1ee-4c2a-9ea5-59065272f0dc
+  RELEASE_VERSION:2.0.9
+  LOAD:6.8247088E7
+  RPC_ADDRESS:10.0.1.137
+  SCHEMA:d9e0f9ae-6221-3987-81fb-1a0134e02b22
+  SEVERITY:0.0
+  DC:DC1
+  NET_VERSION:7
+  RACK:RAC2
+/10.0.1.130
+  generation:1411067279
+  heartbeat:1671345
+  STATUS:NORMAL,-106692201839339278
+  HOST_ID:9ec944e1-0abf-4334-a32f-c0b947196c77
+  RELEASE_VERSION:2.0.9
+  LOAD:8.838359E7
+  RPC_ADDRESS:10.0.1.130
+  SCHEMA:d9e0f9ae-6221-3987-81fb-1a0134e02b22
+  SEVERITY:0.0
+  DC:DC1
+  NET_VERSION:7
+  RACK:RAC1
+/10.0.1.140
+  generation:1411067227
+  heartbeat:1671482
+  STATUS:NORMAL,-1030898123156584416
+  HOST_ID:ceb2924f-2e8b-41e9-8af8-2890c7e41ba5
+  RELEASE_VERSION:2.0.9
+  LOAD:9.7127565E7
+  RPC_ADDRESS:127.0.0.1
+  SCHEMA:d9e0f9ae-6221-3987-81fb-1a0134e02b22
+  SEVERITY:0.0
+  NET_VERSION:7
+  DC:DC1
+  RACK:RAC1
+/10.0.1.133
+  generation:1410906095
+  heartbeat:2160091
+  STATUS:NORMAL,-1038018685985644851
+  HOST_ID:8302c6d5-4c88-4695-bbf4-762bc7f24544
+  RELEASE_VERSION:2.0.9
+  LOAD:8.6713989E7
+  RPC_ADDRESS:10.0.1.133
+  SCHEMA:d9e0f9ae-6221-3987-81fb-1a0134e02b22
+  SEVERITY:0.0
+  DC:DC1
+  NET_VERSION:7
+  RACK:RAC2
+/10.0.1.138
+  generation:1410905966
+  heartbeat:2160458
+  STATUS:NORMAL,-1018547439030001277
+  HOST_ID:c35a2261-a65f-4980-97a2-c4f82e034d4b
+  RELEASE_VERSION:2.0.9
+  LOAD:8.1261228E7
+  RPC_ADDRESS:10.0.1.138
+  SCHEMA:d9e0f9ae-6221-3987-81fb-1a0134e02b22
+  SEVERITY:0.0
+  DC:DC1
+  NET_VERSION:7
+  RACK:RAC1
+/10.0.1.141
+  generation:1411067164
+  heartbeat:316859
+  STATUS:NORMAL,-1019100682670215866
+  HOST_ID:2a8dde5e-29b0-4a67-8204-40769376c44a
+  RELEASE_VERSION:2.0.9
+  LOAD:5.9687052E7
+  RPC_ADDRESS:0.0.0.0
+  SCHEMA:d9e0f9ae-6221-3987-81fb-1a0134e02b22
+  SEVERITY:0.0
+  DC:DC1
+  NET_VERSION:7
+  RACK:RAC1
+/10.0.1.134
+  generation:1411067353
+  heartbeat:1671132
+  STATUS:NORMAL,-1213104093606780526
+  HOST_ID:eddb03b2-98d3-46ff-be63-95435414a883
+  RELEASE_VERSION:2.0.9
+  LOAD:9.7973556E7
+  RPC_ADDRESS:10.0.1.134
+  SCHEMA:d9e0f9ae-6221-3987-81fb-1a0134e02b22
+  SEVERITY:0.0
+  DC:DC1
+  NET_VERSION:7
+  RACK:RAC2
+
+[james@www1 cassandra-top]$ nodetool -h www0-int gossipinfo 
+/10.0.1.136
+  generation:1410906006
+  heartbeat:2160379
+  STATUS:NORMAL,-1022224348962756527
+  HOST_ID:92d522a3-de98-45e0-b0ab-0baa4a6972dd
+  RELEASE_VERSION:2.0.9
+  LOAD:7.1601653E7
+  RPC_ADDRESS:10.0.1.136
+  SCHEMA:d9e0f9ae-6221-3987-81fb-1a0134e02b22
+  SEVERITY:0.0
+  DC:DC1
+  NET_VERSION:7
+  RACK:RAC2
+/10.0.1.137
+  generation:1410898647
+  heartbeat:2182685
+  STATUS:NORMAL,-1062262977753289953
+  HOST_ID:ba667629-d1ee-4c2a-9ea5-59065272f0dc
+  RELEASE_VERSION:2.0.9
+  LOAD:6.8247088E7
+  RPC_ADDRESS:10.0.1.137
+  SCHEMA:d9e0f9ae-6221-3987-81fb-1a0134e02b22
+  SEVERITY:0.0
+  DC:DC1
+  NET_VERSION:7
+  RACK:RAC2
+/10.0.1.130
+  generation:1411067279
+  heartbeat:1671360
+  STATUS:NORMAL,-106692201839339278
+  HOST_ID:9ec944e1-0abf-4334-a32f-c0b947196c77
+  RELEASE_VERSION:2.0.9
+  LOAD:8.838359E7
+  RPC_ADDRESS:10.0.1.130
+  SCHEMA:d9e0f9ae-6221-3987-81fb-1a0134e02b22
+  SEVERITY:0.0
+  DC:DC1
+  NET_VERSION:7
+  RACK:RAC1
+/10.0.1.140
+  generation:1411067227
+  heartbeat:1671500
+  STATUS:NORMAL,-1030898123156584416
+  HOST_ID:ceb2924f-2e8b-41e9-8af8-2890c7e41ba5
+  RELEASE_VERSION:2.0.9
+  LOAD:9.7127565E7
+  RPC_ADDRESS:127.0.0.1
+  SCHEMA:d9e0f9ae-6221-3987-81fb-1a0134e02b22
+  SEVERITY:0.0
+  NET_VERSION:7
+  DC:DC1
+  RACK:RAC1
+/10.0.1.133
+  generation:1410906095
+  heartbeat:2160109
+  STATUS:NORMAL,-1038018685985644851
+  HOST_ID:8302c6d5-4c88-4695-bbf4-762bc7f24544
+  RELEASE_VERSION:2.0.9
+  LOAD:8.6713989E7
+  RPC_ADDRESS:10.0.1.133
+  SCHEMA:d9e0f9ae-6221-3987-81fb-1a0134e02b22
+  SEVERITY:0.0
+  DC:DC1
+  NET_VERSION:7
+  RACK:RAC2
+/10.0.1.138
+  generation:1410905966
+  heartbeat:2160473
+  STATUS:NORMAL,-1018547439030001277
+  HOST_ID:c35a2261-a65f-4980-97a2-c4f82e034d4b
+  RELEASE_VERSION:2.0.9
+  LOAD:8.1261228E7
+  RPC_ADDRESS:10.0.1.138
+  SCHEMA:d9e0f9ae-6221-3987-81fb-1a0134e02b22
+  SEVERITY:0.0
+  DC:DC1
+  NET_VERSION:7
+  RACK:RAC1
+/10.0.1.141
+  generation:1411067164
+  heartbeat:316859
+  STATUS:NORMAL,-1019100682670215866
+  HOST_ID:2a8dde5e-29b0-4a67-8204-40769376c44a
+  RELEASE_VERSION:2.0.9
+  LOAD:5.9687052E7
+  RPC_ADDRESS:0.0.0.0
+  SCHEMA:d9e0f9ae-6221-3987-81fb-1a0134e02b22
+  SEVERITY:0.0
+  DC:DC1
+  NET_VERSION:7
+  RACK:RAC1
+/10.0.1.134
+  generation:1411067353
+  heartbeat:1671147
+  STATUS:NORMAL,-1213104093606780526
+  HOST_ID:eddb03b2-98d3-46ff-be63-95435414a883
+  RELEASE_VERSION:2.0.9
+  LOAD:9.7973556E7
+  RPC_ADDRESS:10.0.1.134
+  SCHEMA:d9e0f9ae-6221-3987-81fb-1a0134e02b22
+  SEVERITY:0.0
+  DC:DC1
+  NET_VERSION:7
+  RACK:RAC2"
+elif [[ $cmd = "describecluster" ]]; then
+   echo -e "Cluster Information:
+	Name: Test Cluster
+	Snitch: org.apache.cassandra.locator.DynamicEndpointSnitch
+	Partitioner: org.apache.cassandra.dht.Murmur3Partitioner
+	Schema versions:
+		d9e0f9ae-6221-3987-81fb-1a0134e02b22: [10.0.1.130, 10.0.1.133, 10.0.1.134, 10.0.1.136, 10.0.1.137, 10.0.1.138, 10.0.1.140]
+
+		UNREACHABLE: [10.0.1.141]"
+
+elif [[ $cmd = "cfstats" ]]; then
+   echo -e "Keyspace: system
+	Read Count: 378
+	Read Latency: 1.013100529100529 ms.
+	Write Count: 24427
+	Write Latency: 0.0698306791664961 ms.
+	Pending Tasks: 0
+		Table: IndexInfo
+		SSTable count: 0
+		Space used (live), bytes: 0
+		Space used (total), bytes: 0
+		SSTable Compression Ratio: 0.0
+		Number of keys (estimate): 0
+		Memtable cell count: 0
+		Memtable data size, bytes: 0
+		Memtable switch count: 0
+		Local read count: 0
+		Local read latency: 0.000 ms
+		Local write count: 0
+		Local write latency: 0.000 ms
+		Pending tasks: 0
+		Bloom filter false positives: 0
+		Bloom filter false ratio: 0.00000
+		Bloom filter space used, bytes: 0
+		Compacted partition minimum bytes: 0
+		Compacted partition maximum bytes: 0
+		Compacted partition mean bytes: 0
+		Average live cells per slice (last five minutes): 0.0
+		Average tombstones per slice (last five minutes): 0.0
+
+		Table: NodeIdInfo
+		SSTable count: 1
+		Space used (live), bytes: 5043
+		Space used (total), bytes: 5043
+		SSTable Compression Ratio: 1.0357142857142858
+		Number of keys (estimate): 128
+		Memtable cell count: 0
+		Memtable data size, bytes: 0
+		Memtable switch count: 0
+		Local read count: 0
+		Local read latency: 0.000 ms
+		Local write count: 0
+		Local write latency: 0.000 ms
+		Pending tasks: 0
+		Bloom filter false positives: 0
+		Bloom filter false ratio: 0.00000
+		Bloom filter space used, bytes: 336
+		Compacted partition minimum bytes: 51
+		Compacted partition maximum bytes: 60
+		Compacted partition mean bytes: 60
+		Average live cells per slice (last five minutes): 0.0
+		Average tombstones per slice (last five minutes): 0.0
+
+		Table: batchlog
+		SSTable count: 0
+		Space used (live), bytes: 0
+		Space used (total), bytes: 0
+		SSTable Compression Ratio: 0.0
+		Number of keys (estimate): 0
+		Memtable cell count: 0
+		Memtable data size, bytes: 0
+		Memtable switch count: 0
+		Local read count: 0
+		Local read latency: 0.000 ms
+		Local write count: 0
+		Local write latency: 0.000 ms
+		Pending tasks: 0
+		Bloom filter false positives: 0
+		Bloom filter false ratio: 0.00000
+		Bloom filter space used, bytes: 0
+		Compacted partition minimum bytes: 0
+		Compacted partition maximum bytes: 0
+		Compacted partition mean bytes: 0
+		Average live cells per slice (last five minutes): 0.0
+		Average tombstones per slice (last five minutes): 0.0
+
+		Table: compaction_history
+		SSTable count: 3
+		Space used (live), bytes: 54534
+		Space used (total), bytes: 69678
+		SSTable Compression Ratio: 0.45937778888709935
+		Number of keys (estimate): 640
+		Memtable cell count: 9
+		Memtable data size, bytes: 3184
+		Memtable switch count: 91
+		Local read count: 0
+		Local read latency: 0.000 ms
+		Local write count: 178
+		Local write latency: 0.000 ms
+		Pending tasks: 0
+		Bloom filter false positives: 0
+		Bloom filter false ratio: 0.00000
+		Bloom filter space used, bytes: 1648
+		Compacted partition minimum bytes: 311
+		Compacted partition maximum bytes: 535
+		Compacted partition mean bytes: 431
+		Average live cells per slice (last five minutes): 0.0
+		Average tombstones per slice (last five minutes): 0.0
+
+		Table: compactions_in_progress
+		SSTable count: 1
+		Space used (live), bytes: 6019
+		Space used (total), bytes: 22607
+		SSTable Compression Ratio: 1.1875
+		Number of keys (estimate): 128
+		Memtable cell count: 0
+		Memtable data size, bytes: 0
+		Memtable switch count: 111
+		Local read count: 0
+		Local read latency: 0.000 ms
+		Local write count: 111
+		Local write latency: 0.000 ms
+		Pending tasks: 0
+		Bloom filter false positives: 0
+		Bloom filter false ratio: 0.00000
+		Bloom filter space used, bytes: 1296
+		Compacted partition minimum bytes: 30
+		Compacted partition maximum bytes: 35
+		Compacted partition mean bytes: 35
+		Average live cells per slice (last five minutes): 0.0
+		Average tombstones per slice (last five minutes): 0.0
+
+		Table: hints
+		SSTable count: 0
+		Space used (live), bytes: 0
+		Space used (total), bytes: 0
+		SSTable Compression Ratio: 0.0
+		Number of keys (estimate): 0
+		Memtable cell count: 0
+		Memtable data size, bytes: 0
+		Memtable switch count: 0
+		Local read count: 0
+		Local read latency: 0.000 ms
+		Local write count: 0
+		Local write latency: 0.000 ms
+		Pending tasks: 0
+		Bloom filter false positives: 0
+		Bloom filter false ratio: 0.00000
+		Bloom filter space used, bytes: 0
+		Compacted partition minimum bytes: 0
+		Compacted partition maximum bytes: 0
+		Compacted partition mean bytes: 0
+		Average live cells per slice (last five minutes): 0.0
+		Average tombstones per slice (last five minutes): 0.0
+
+		Table: local
+		SSTable count: 2
+		Space used (live), bytes: 21599
+		Space used (total), bytes: 21848
+		SSTable Compression Ratio: 0.45036450375387505
+		Number of keys (estimate): 256
+		Memtable cell count: 0
+		Memtable data size, bytes: 0
+		Memtable switch count: 4
+		Local read count: 11
+		Local read latency: 0.000 ms
+		Local write count: 7
+		Local write latency: 0.000 ms
+		Pending tasks: 0
+		Bloom filter false positives: 0
+		Bloom filter false ratio: 0.00000
+		Bloom filter space used, bytes: 1312
+		Compacted partition minimum bytes: 11865
+		Compacted partition maximum bytes: 14237
+		Compacted partition mean bytes: 14237
+		Average live cells per slice (last five minutes): 1.0
+		Average tombstones per slice (last five minutes): 0.0
+
+		Table: paxos
+		SSTable count: 0
+		Space used (live), bytes: 0
+		Space used (total), bytes: 0
+		SSTable Compression Ratio: 0.0
+		Number of keys (estimate): 0
+		Memtable cell count: 0
+		Memtable data size, bytes: 0
+		Memtable switch count: 0
+		Local read count: 0
+		Local read latency: 0.000 ms
+		Local write count: 0
+		Local write latency: 0.000 ms
+		Pending tasks: 0
+		Bloom filter false positives: 0
+		Bloom filter false ratio: 0.00000
+		Bloom filter space used, bytes: 0
+		Compacted partition minimum bytes: 0
+		Compacted partition maximum bytes: 0
+		Compacted partition mean bytes: 0
+		Average live cells per slice (last five minutes): 0.0
+		Average tombstones per slice (last five minutes): 0.0
+
+		Table: peer_events
+		SSTable count: 2
+		Space used (live), bytes: 45902
+		Space used (total), bytes: 57502
+		SSTable Compression Ratio: 0.4386755614416733
+		Number of keys (estimate): 256
+		Memtable cell count: 4
+		Memtable data size, bytes: 5173
+		Memtable switch count: 110
+		Local read count: 0
+		Local read latency: 0.000 ms
+		Local write count: 629
+		Local write latency: 0.000 ms
+		Pending tasks: 0
+		Bloom filter false positives: 0
+		Bloom filter false ratio: 0.00000
+		Bloom filter space used, bytes: 1312
+		Compacted partition minimum bytes: 180
+		Compacted partition maximum bytes: 61214
+		Compacted partition mean bytes: 21671
+		Average live cells per slice (last five minutes): 0.0
+		Average tombstones per slice (last five minutes): 0.0
+
+		Table: peers
+		SSTable count: 2
+		Space used (live), bytes: 81697
+		Space used (total), bytes: 81697
+		SSTable Compression Ratio: 0.4220901380044729
+		Number of keys (estimate): 256
+		Memtable cell count: 0
+		Memtable data size, bytes: 0
+		Memtable switch count: 1
+		Local read count: 8
+		Local read latency: 0.000 ms
+		Local write count: 161
+		Local write latency: 0.000 ms
+		Pending tasks: 0
+		Bloom filter false positives: 0
+		Bloom filter false ratio: 0.00000
+		Bloom filter space used, bytes: 360
+		Compacted partition minimum bytes: 18
+		Compacted partition maximum bytes: 14237
+		Compacted partition mean bytes: 13289
+		Average live cells per slice (last five minutes): 1.0
+		Average tombstones per slice (last five minutes): 0.0
+
+		Table: range_xfers
+		SSTable count: 0
+		Space used (live), bytes: 0
+		Space used (total), bytes: 0
+		SSTable Compression Ratio: 0.0
+		Number of keys (estimate): 0
+		Memtable cell count: 0
+		Memtable data size, bytes: 0
+		Memtable switch count: 0
+		Local read count: 0
+		Local read latency: 0.000 ms
+		Local write count: 0
+		Local write latency: 0.000 ms
+		Pending tasks: 0
+		Bloom filter false positives: 0
+		Bloom filter false ratio: 0.00000
+		Bloom filter space used, bytes: 0
+		Compacted partition minimum bytes: 0
+		Compacted partition maximum bytes: 0
+		Compacted partition mean bytes: 0
+		Average live cells per slice (last five minutes): 0.0
+		Average tombstones per slice (last five minutes): 0.0
+
+		Table: schema_columnfamilies
+		SSTable count: 2
+		Space used (live), bytes: 28289
+		Space used (total), bytes: 28289
+		SSTable Compression Ratio: 0.17969921971921815
+		Number of keys (estimate): 256
+		Memtable cell count: 0
+		Memtable data size, bytes: 0
+		Memtable switch count: 1
+		Local read count: 35
+		Local read latency: 0.000 ms
+		Local write count: 32
+		Local write latency: 0.000 ms
+		Pending tasks: 0
+		Bloom filter false positives: 0
+		Bloom filter false ratio: 0.00000
+		Bloom filter space used, bytes: 360
+		Compacted partition minimum bytes: 1332
+		Compacted partition maximum bytes: 29521
+		Compacted partition mean bytes: 9042
+		Average live cells per slice (last five minutes): 1.0
+		Average tombstones per slice (last five minutes): 0.0
+
+		Table: schema_columns
+		SSTable count: 2
+		Space used (live), bytes: 31535
+		Space used (total), bytes: 31535
+		SSTable Compression Ratio: 0.19150107225036916
+		Number of keys (estimate): 256
+		Memtable cell count: 0
+		Memtable data size, bytes: 0
+		Memtable switch count: 1
+		Local read count: 58
+		Local read latency: 0.000 ms
+		Local write count: 32
+		Local write latency: 0.000 ms
+		Pending tasks: 0
+		Bloom filter false positives: 0
+		Bloom filter false ratio: 0.00000
+		Bloom filter space used, bytes: 360
+		Compacted partition minimum bytes: 180
+		Compacted partition maximum bytes: 61214
+		Compacted partition mean bytes: 10839
+		Average live cells per slice (last five minutes): 9.0
+		Average tombstones per slice (last five minutes): 0.0
+
+		Table: schema_keyspaces
+		SSTable count: 2
+		Space used (live), bytes: 10303
+		Space used (total), bytes: 10303
+		SSTable Compression Ratio: 0.5905360015138613
+		Number of keys (estimate): 256
+		Memtable cell count: 0
+		Memtable data size, bytes: 0
+		Memtable switch count: 1
+		Local read count: 0
+		Local read latency: 0.000 ms
+		Local write count: 2
+		Local write latency: 0.000 ms
+		Pending tasks: 0
+		Bloom filter false positives: 0
+		Bloom filter false ratio: 0.00000
+		Bloom filter space used, bytes: 352
+		Compacted partition minimum bytes: 150
+		Compacted partition maximum bytes: 215
+		Compacted partition mean bytes: 204
+		Average live cells per slice (last five minutes): 0.0
+		Average tombstones per slice (last five minutes): 0.0
+
+		Table: schema_triggers
+		SSTable count: 0
+		Space used (live), bytes: 0
+		Space used (total), bytes: 0
+		SSTable Compression Ratio: 0.0
+		Number of keys (estimate): 0
+		Memtable cell count: 0
+		Memtable data size, bytes: 0
+		Memtable switch count: 0
+		Local read count: 44
+		Local read latency: 0.000 ms
+		Local write count: 0
+		Local write latency: 0.000 ms
+		Pending tasks: 0
+		Bloom filter false positives: 0
+		Bloom filter false ratio: 0.00000
+		Bloom filter space used, bytes: 0
+		Compacted partition minimum bytes: 0
+		Compacted partition maximum bytes: 0
+		Compacted partition mean bytes: 0
+		Average live cells per slice (last five minutes): 0.0
+		Average tombstones per slice (last five minutes): 0.0
+
+		Table: sstable_activity
+		SSTable count: 1
+		Space used (live), bytes: 7735
+		Space used (total), bytes: 40519
+		SSTable Compression Ratio: 0.288268156424581
+		Number of keys (estimate): 128
+		Memtable cell count: 423
+		Memtable data size, bytes: 22402
+		Memtable switch count: 148
+		Local read count: 222
+		Local read latency: 0.000 ms
+		Local write count: 23275
+		Local write latency: 0.046 ms
+		Pending tasks: 0
+		Bloom filter false positives: 0
+		Bloom filter false ratio: 0.00000
+		Bloom filter space used, bytes: 1296
+		Compacted partition minimum bytes: 150
+		Compacted partition maximum bytes: 179
+		Compacted partition mean bytes: 179
+		Average live cells per slice (last five minutes): 0.0
+		Average tombstones per slice (last five minutes): 0.0
+
+----------------"
+elif [[ -z $cmd ]]; then
+   echo "Command was not specified."
+   exit 1
+else
+   echo "nodetool $cmd"
+   echo
+   exit
+fi
+
