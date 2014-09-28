@@ -4,7 +4,7 @@ cassandra-top
 **Summary**
 
 The Cassandra top command, cass_top, is a friendly UI for monitoring clusters,
-similar to the linux top command, and shows menus to build and run nodetool commands.
+similar to the top command, and shows menus to build and run nodetool commands.
 
 **Features**
 
@@ -19,7 +19,7 @@ cass_top is a wrapper around the Cassandra nodetool command that:
 
 **Technical Details**
 
-- bash only (no dependencies except nodetool)
+- bash only (no dependencies except nodetool), tested on linux and Mac OS X
 - no additional firewall holes needed beyond what nodetool requires
 - minimal output to show multiple Cassandra rings on the same monitor.
 

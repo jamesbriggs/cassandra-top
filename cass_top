@@ -1,11 +1,11 @@
 #!/bin/bash
 
 # Program: cass_top
-# Usage: cass_top [connection_host=localhost] [keyspace=all] [one-character option=none]
+# Usage: MOCK=[1] cass_top [connection_host=localhost] [keyspace=all] [one-character option=none]
 # License: Copyright 2014 by James Briggs, San Jose, California, USA. Released under Apache 2 software license
 # Github: https://github.com/jamesbriggs/cassandra-top/blob/master/cass_top
 # Date: 2014 09 16
-# Env: Linux bash, vt100/ANSI terminal types
+# Env: bash on linux or Mac OS X, vt100/ANSI terminal types
 # Programming Notes:
 #    - the bash "continue" statement is used to jump back to the "while true" read loop throughout this program, even from nested subroutine calls. it works, except when it doesn't.
 #    - if you see the error message "nodetool: line nnn: [: XXX unary operator expected" it means multiple nodetool args were double-quoted together, confusing nodetool
@@ -32,6 +32,9 @@ timeout=1
 # path to find nodetool commmand. please set it to a full pathname to improve security and performance.
 nodetool_cmd="nodetool"
 
+# path to find mock_nodetool commmand if MOCK is set and you need it for testing, otherwise leave it empty.
+mock_nodetool_cmd="mock_nodetool"
+
 # where to log nodetool commands (to disable logging, use empty string). See the log_it() function for how to customize logging.
 logfile="$HOME/cass_top.log"
 
@@ -53,7 +56,9 @@ shopt -s nocasematch # case-insensitive regex matches
 #shopt extdebug
 
 mockmode=${MOCK:-}
-[[ -n $mockmode ]] && nodetool_cmd="./mock_nodetool"
+if [[ -n $mockmode ]] && [[ -n $mock_nodetool_cmd ]]; then
+   nodetool_cmd="$mock_nodetool_cmd"
+fi
 
 # some variables that are globablly used
 

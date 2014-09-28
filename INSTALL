@@ -5,7 +5,8 @@ cass_top is easy to install:
  
 Dependencies
 
-- cass_top is a single bash file called 'cass_top'. Download it and make it executable with 'chmod 755 cass_top'
+- cass_top is a single bash file called 'cass_top' that runs on linux or Mac OS X.
+- Download it and make it executable with 'chmod 755 cass_top'
 - You need a running Cassandra cluster with nodetool (and Java).
 - If your cluster is authenticated, then JMX_USERNAME and JMX_PASSWORD need to be set in your environment, usually in cassandra-env.sh
 - There's several user-serviceable variables at the top of the cass_top file if you want to set the nodetool or logging path, etc.
