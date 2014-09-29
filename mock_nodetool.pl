@@ -1115,7 +1115,8 @@ sub process_args {
 
    print Dumper(@options) if $DEBUG;
 
-   # args pre-processing - to reduce parsing ambiguities, replace some of the short options with long options before calling Getopt::Long
+   # args pre-processing - to reduce parsing ambiguities, replace some of the short options with long options before calling Getopt::Long.
+   # Users should use double dashes if they want long args to really get parsed right, instead of as bundled options.
    my %not_so_short_options = ( cf  => "column-family",
                                 dc  => "in-dc",
                                 et  => "end-token",
@@ -1123,7 +1124,6 @@ sub process_args {
                                 pr  => "partitioner-range",
                                 pw  => "password",
                                 st  => "start-token",
-                                tag => "tag", # hmm, strange one
    );
  
    if (scalar(@ARGV) > 0) {
@@ -1155,7 +1155,7 @@ sub process_args {
 
 sub value_not_required {
 # option arg not expected, but we still want to set it to 1
-   my ($option, $value) = @_;
+   my ($option, $value, $rhash) = @_;
 
    if ($option ne "") {
       $opts{$option} = 1;
@@ -1164,7 +1164,7 @@ sub value_not_required {
 
 sub value_required {
 # option arg expected, do error handling if missing, including a custom error message
-   my ($option, $value) = @_;
+   my ($option, $value, $rhash) = @_;
 
    print "in value_required: $option, $value\n" if $DEBUG;
 
@@ -1172,13 +1172,13 @@ sub value_required {
       if (not defined $value or $value eq "") {
          print "Missing argument for option:$option\n";
          $go_err++;
-         die "!";
+         die("!FINISH");
       }
       else {
          if (exists $opts{$option}) {
             print "Unrecognized command: $value\n";
             $go_err++;
-            die "!";
+            die("!FINISH");
          }
          else {
             $opts{$option} = $value;

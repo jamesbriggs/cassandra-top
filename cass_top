@@ -33,7 +33,7 @@ timeout=1
 nodetool_cmd="nodetool"
 
 # path to find mock_nodetool commmand if MOCK is set and you need it for testing, otherwise leave it empty.
-mock_nodetool_cmd="mock_nodetool"
+mock_nodetool_cmd="./mock_nodetool"
 
 # where to log nodetool commands (to disable logging, use empty string). See the log_it() function for how to customize logging.
 logfile="$HOME/cass_top.log"
