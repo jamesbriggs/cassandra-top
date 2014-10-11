@@ -16,7 +16,7 @@ use warnings;
 
 use Data::Dumper;
 
-use Getopt::Long qw(:config bundling pass_through no_auto_abbrev no_ignore_case prefix_pattern=--|-);
+use Getopt::Long qw(:config bundling_override pass_through no_auto_abbrev no_ignore_case prefix_pattern=--|-);
 
    my $DEBUG = 1;
 
@@ -1126,11 +1126,11 @@ sub process_args {
                                 st  => "start-token",
    );
  
-   if (scalar(@ARGV) > 0) {
-      for (my $n=0; $n < scalar(@ARGV); $n++) {
-          $ARGV[$n] =~ s/^(--?)([\w-]{2,3})$/exists $not_so_short_options{$2} ? "--$not_so_short_options{$2}" : "$1$2"/e;
-      }
-   }
+#   if (scalar(@ARGV) > 0) {
+#      for (my $n=0; $n < scalar(@ARGV); $n++) {
+#          $ARGV[$n] =~ s/^(--?)([\w-]{2,3})$/exists $not_so_short_options{$2} ? "--$not_so_short_options{$2}" : "$1$2"/e;
+#      }
+#   }
 
    my $result = GetOptions(@options);
 
@@ -1145,6 +1145,10 @@ sub process_args {
    }
 
    my $cmd = join(' ', @ARGV);
+   $cmd =~ s/^ +//;
+   $cmd =~ s/ +$//;
+   $cmd =~ s/ +/ /g;
+
    if ($DEBUG) {
       print Dumper(\%opts);
       print "cmd=$cmd\n";

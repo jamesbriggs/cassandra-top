@@ -25,9 +25,15 @@ cass_top is a wrapper around the Cassandra nodetool command that:
 
 `usage: cass_top [connection_host=localhost] [keyspace=all] [one-character option=none]`
 
-To run the provided tests:
+**For Contributors**
+
+To run the provided tests with Cassandra nodetool:
 
 - `HOST=1.2.3.4 make test`
+
+To run the provided tests with mock nodetool (useful for testing without a network, on your notebook or for porting):
+
+- `MOCK=1 HOST=1.2.3.4 make test`
 
 ![cass_top screenshot](cass_top.png?raw=true "cass_top screenshot")
 ![cass_top_help screenshot](cass_top_help.png?raw=true "cass_top_help screenshot")
