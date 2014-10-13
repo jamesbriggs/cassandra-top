@@ -13,6 +13,8 @@
 #    - it's ugly-looking, but string pasting can be used to one-line read formatting like this: read -e -p $'\n'"What is the DC? "
 #    - bash -x cass_top is surprisingly useful for tracing, especially if you insert exit immediately after the code you're debugging
 #    - summary of bash read options: http://ss64.com/bash/read.html
+#    - how to use bashdb without terminating on scripted breakpoints because of pty conflicts:
+#      http://sourceforge.net/p/bashdb/mailman/message/20998494/ (in ~/.bashdbinit add "source /dev/pts/NN", where NN is your shell's pty from the ps command)
 # Security Notes:
 #    - set the full pathname for nodetool
 #    - the only envariables used are HOME TERM USER JMX_USERNAME JMX_PASSWORD, though nodetool could use others like JAVA_HOME and JRE_HOME and
@@ -34,6 +36,9 @@ nodetool_cmd="nodetool"
 
 # path to find mock_nodetool commmand if MOCK is set and you need it for testing, otherwise leave it empty.
 mock_nodetool_cmd="./mock_nodetool"
+
+# in case we're running under bashdb, $0 will be set to this string
+program_debugger="bashdb"
 
 # where to log nodetool commands (to disable logging, use empty string). See the log_it() function for how to customize logging.
 logfile="$HOME/cass_top.log"
@@ -111,6 +116,10 @@ c_option=${3:-""}
 first_run=1
 n_views=0
 program=${0##*/} # extract basename from the full pathname ($0)
+
+if [ $program == "$program_debugger" ]; then # quiet -v option
+   _Dbg_set_trace_init=1
+fi
 
 msg_usage="$program $version usage: $program [connection_host=localhost] [keyspace=all] [one character option=none]"
 
@@ -256,6 +265,15 @@ append_auth() {
    fi
 
    echo -n "$cmd" # bash doesn't have a real function return capability, so echo the return value for capture by the caller
+}
+
+do_bp() {
+   bp_msg=${1:-}
+
+   if [ $program == "$program_debugger" ]; then # see programming notes above to understand how to make this work without terminating because of of pty conflicts
+      echo -e "\ninfo: $bp_msg\n"
+      _Dbg_debugger
+   fi
 }
 
 do_colorize() {
@@ -1231,6 +1249,8 @@ while true; do
    clear_screen
    show_banner
    echo -e "$out"
+
+   do_bp "You are now in bashdb just before the cache logic and keyboard read loop. Either type 'help' then ENTER, or type 'c' then ENTER and then very quickly type the cass_top command key..."
 
    # cache cfstats and update periodically
    if [ "$first_run" -eq 1 ] || [ $(( $n_views % 100 )) -eq 0 ]; then

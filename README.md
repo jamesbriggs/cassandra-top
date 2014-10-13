@@ -35,6 +35,13 @@ To run the provided tests with mock nodetool (useful for testing without a netwo
 
 - `MOCK=1 HOST=1.2.3.4 make test`
 
+To run cass_top under the bashdb debugger:
+
+- install bashdb and add it to your PATH
+- do 'ps' to see your shell's pty number (NN) then:
+- `echo "source /dev/pts/NN" > ~/.bashdbinit`
+- `MOCK=1 HOST=1.2.3.4 bashdb cass_top` then type 'c' ENTER. There are scripted breakpoints to get you started debugging.
+
 ![cass_top screenshot](cass_top.png?raw=true "cass_top screenshot")
 ![cass_top_help screenshot](cass_top_help.png?raw=true "cass_top_help screenshot")
 
